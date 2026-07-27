@@ -66,10 +66,16 @@ namespace pjh::platform
         if (!file)
             return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
         auto size = file.tellg();
+        if (size == std::streampos(-1))
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
         file.seekg(0);
+        if (!file)
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
         std::string content(static_cast<std::size_t>(size), '\0');
-        file.read(content.data(), size);
-        return pjh::result::Result<std::string, ErrorCode>::Ok(content);
+        file.read(content.data(), static_cast<std::streamsize>(size));
+        if (!file)
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+        return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
     }
 
     auto Fs::write_file(
