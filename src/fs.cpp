@@ -4,11 +4,14 @@
 #include <pjh_platform/platform.hpp>
 
 #include <cerrno>
-#include <fstream>
-#include <iterator>
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace pjh::platform
@@ -117,33 +120,178 @@ namespace pjh::platform
     auto Fs::read_file(const std::filesystem::path& p)
         -> pjh::result::Result<std::string, ErrorCode>
     {
-        std::ifstream file(p, std::ios::binary | std::ios::ate);
-        if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
-        auto size = file.tellg();
-        if (size == std::streampos(-1))
+#if PJH_PLATFORM_WINDOWS
+        HANDLE hFile = CreateFileW(
+            p.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (hFile == INVALID_HANDLE_VALUE)
+        {
+            DWORD err = GetLastError();
+            if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+            if (err == ERROR_ACCESS_DENIED)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
-        file.seekg(0);
-        if (!file)
+        }
+
+        LARGE_INTEGER fileSize;
+        if (!GetFileSizeEx(hFile, &fileSize))
+        {
+            CloseHandle(hFile);
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
-        std::string content(static_cast<std::size_t>(size), '\0');
-        file.read(content.data(), static_cast<std::streamsize>(size));
-        if (!file)
+        }
+
+        if (fileSize.QuadPart == 0)
+        {
+            CloseHandle(hFile);
+            return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
+        }
+
+        HANDLE hMapping = CreateFileMappingW(
+            hFile,
+            nullptr,
+            PAGE_READONLY,
+            0,
+            0,
+            nullptr);
+        if (!hMapping)
+        {
+            CloseHandle(hFile);
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        void* addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+        if (!addr)
+        {
+            CloseHandle(hMapping);
+            CloseHandle(hFile);
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        std::string content(
+            static_cast<const char*>(addr),
+            static_cast<std::size_t>(fileSize.QuadPart));
+
+        UnmapViewOfFile(addr);
+        CloseHandle(hMapping);
+        CloseHandle(hFile);
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
+
+#else
+        int fd = ::open(p.c_str(), O_RDONLY);
+        if (fd == -1)
+        {
+            if (errno == ENOENT)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+            if (errno == EACCES)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        struct stat st;
+        if (::fstat(fd, &st) == -1)
+        {
+            ::close(fd);
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        if (st.st_size == 0)
+        {
+            ::close(fd);
+            return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
+        }
+
+        void* addr = ::mmap(
+            nullptr,
+            static_cast<std::size_t>(st.st_size),
+            PROT_READ,
+            MAP_PRIVATE,
+            fd,
+            0);
+        if (addr == MAP_FAILED)
+        {
+            ::close(fd);
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        std::string content(
+            static_cast<const char*>(addr),
+            static_cast<std::size_t>(st.st_size));
+
+        ::munmap(addr, static_cast<std::size_t>(st.st_size));
+        ::close(fd);
+        return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
+#endif
     }
 
     auto Fs::write_file(
         const std::filesystem::path& p, std::string_view content)
         -> pjh::result::Result<void, ErrorCode>
     {
-        std::ofstream file(p, std::ios::binary);
-        if (!file)
+#if PJH_PLATFORM_WINDOWS
+        HANDLE hFile = CreateFileW(
+            p.c_str(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (hFile == INVALID_HANDLE_VALUE)
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
-        file.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+
+        if (!content.empty())
+        {
+            DWORD written;
+            if (!WriteFile(
+                    hFile,
+                    content.data(),
+                    static_cast<DWORD>(content.size()),
+                    &written,
+                    nullptr) ||
+                written != content.size())
+            {
+                CloseHandle(hFile);
+                return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+            }
+        }
+
+        CloseHandle(hFile);
         return pjh::result::Result<void, ErrorCode>::Ok();
+
+#else
+        int fd = ::open(
+            p.c_str(),
+            O_WRONLY | O_CREAT | O_TRUNC,
+            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        if (fd == -1)
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+
+        if (!content.empty())
+        {
+            const char* data = content.data();
+            std::size_t remaining = content.size();
+            while (remaining > 0)
+            {
+                ssize_t written = ::write(fd, data, remaining);
+                if (written == -1)
+                {
+                    ::close(fd);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                data += written;
+                remaining -= static_cast<std::size_t>(written);
+            }
+        }
+
+        ::close(fd);
+        return pjh::result::Result<void, ErrorCode>::Ok();
+#endif
     }
 
     auto Fs::list_directory(const std::filesystem::path& p)
