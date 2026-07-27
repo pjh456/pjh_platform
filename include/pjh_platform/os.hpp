@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INCLUDE_PJH_PLATFORM_OS_HPP
+#define INCLUDE_PJH_PLATFORM_OS_HPP
 
 #include <string_view>
 
@@ -35,3 +36,5 @@ inline constexpr std::string_view path_list_separator =
     is_windows ? ";" : ":";
 
 } // namespace pjh::platform::os
+
+#endif // INCLUDE_PJH_PLATFORM_OS_HPP

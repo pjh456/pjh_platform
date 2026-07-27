@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INCLUDE_PJH_PLATFORM_FS_HPP
+#define INCLUDE_PJH_PLATFORM_FS_HPP
 
 #include <filesystem>
 #include <optional>
@@ -33,3 +34,5 @@ auto temp_directory() -> std::filesystem::path;
 auto home_directory() -> std::optional<std::filesystem::path>;
 
 } // namespace pjh::platform::fs
+
+#endif // INCLUDE_PJH_PLATFORM_FS_HPP

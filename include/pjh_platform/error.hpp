@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INCLUDE_PJH_PLATFORM_ERROR_HPP
+#define INCLUDE_PJH_PLATFORM_ERROR_HPP
 
 #include <system_error>
 #include <string>
@@ -41,3 +42,5 @@ inline std::error_code make_error_code(errc e) noexcept {
 namespace std {
     template<> struct is_error_code_enum<pjh::platform::errc> : true_type {};
 }
+
+#endif // INCLUDE_PJH_PLATFORM_ERROR_HPP
