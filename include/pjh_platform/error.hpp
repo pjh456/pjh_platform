@@ -8,14 +8,14 @@ namespace pjh::platform
 
     enum class ErrorCode
     {
-        success = 0,
-        not_found,
-        permission_denied,
-        already_exists,
-        invalid_argument,
-        not_supported,
-        io_error,
-        unknown,
+        Success = 0,
+        NotFound,
+        PermissionDenied,
+        AlreadyExists,
+        InvalidArgument,
+        NotSupported,
+        IoError,
+        Unknown,
     };
 
 }  // namespace pjh::platform

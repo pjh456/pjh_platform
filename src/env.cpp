@@ -56,7 +56,7 @@ namespace pjh::platform
         auto wname = Encoding::to_wide(name);
         DWORD len = GetEnvironmentVariableW(wname.c_str(), nullptr, 0);
         if (len == 0)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         std::wstring wvalue(static_cast<std::size_t>(len), L'\0');
         GetEnvironmentVariableW(wname.c_str(), wvalue.data(), len);
         wvalue.pop_back();
@@ -65,7 +65,7 @@ namespace pjh::platform
         auto n   = std::string(name);
         const char* val = std::getenv(n.c_str());
         if (!val)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::string(val));
 #endif
     }
@@ -77,13 +77,13 @@ namespace pjh::platform
         auto wname  = Encoding::to_wide(name);
         auto wvalue = Encoding::to_wide(value);
         if (!SetEnvironmentVariableW(wname.c_str(), wvalue.c_str()))
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<void, ErrorCode>::Ok();
 #else
         auto n = std::string(name);
         auto v = std::string(value);
         if (::setenv(n.c_str(), v.c_str(), 1) != 0)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
     }
@@ -94,12 +94,12 @@ namespace pjh::platform
 #if PJH_PLATFORM_WINDOWS
         auto wname = Encoding::to_wide(name);
         if (!SetEnvironmentVariableW(wname.c_str(), nullptr))
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<void, ErrorCode>::Ok();
 #else
         auto n = std::string(name);
         if (::unsetenv(n.c_str()) != 0)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
     }

@@ -3,11 +3,55 @@
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
 
+#include <cerrno>
 #include <fstream>
 #include <iterator>
 
 namespace pjh::platform
 {
+
+    namespace {
+
+        auto map_error_code(const std::error_code& ec) -> ErrorCode
+        {
+            if (!ec)
+                return ErrorCode::Success;
+
+            if (ec.category() == std::generic_category())
+            {
+                switch (ec.value())
+                {
+                case ENOENT:  return ErrorCode::NotFound;
+                case EACCES:
+                case EPERM:   return ErrorCode::PermissionDenied;
+                case EEXIST:  return ErrorCode::AlreadyExists;
+                case EINVAL:  return ErrorCode::InvalidArgument;
+                case ENOTSUP: return ErrorCode::NotSupported;
+                case EIO:     return ErrorCode::IoError;
+                default:      return ErrorCode::Unknown;
+                }
+            }
+
+#if defined(_WIN32)
+            if (ec.category() == std::system_category())
+            {
+                switch (static_cast<unsigned long>(ec.value()))
+                {
+                case ERROR_FILE_NOT_FOUND:
+                case ERROR_PATH_NOT_FOUND:  return ErrorCode::NotFound;
+                case ERROR_ACCESS_DENIED:   return ErrorCode::PermissionDenied;
+                case ERROR_ALREADY_EXISTS:  return ErrorCode::AlreadyExists;
+                case ERROR_INVALID_PARAMETER: return ErrorCode::InvalidArgument;
+                case ERROR_NOT_SUPPORTED:   return ErrorCode::NotSupported;
+                default:                    return ErrorCode::Unknown;
+                }
+            }
+#endif
+
+            return ErrorCode::Unknown;
+        }
+
+    }
 
     auto Fs::current_path() -> std::filesystem::path
     {
@@ -20,7 +64,7 @@ namespace pjh::platform
         std::error_code ec;
         std::filesystem::create_directories(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
@@ -30,7 +74,7 @@ namespace pjh::platform
         std::error_code ec;
         auto count = std::filesystem::remove_all(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(count);
     }
 
@@ -55,7 +99,7 @@ namespace pjh::platform
         std::error_code ec;
         auto sz = std::filesystem::file_size(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(sz);
     }
 
@@ -64,17 +108,17 @@ namespace pjh::platform
     {
         std::ifstream file(p, std::ios::binary | std::ios::ate);
         if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         auto size = file.tellg();
         if (size == std::streampos(-1))
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         file.seekg(0);
         if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         std::string content(static_cast<std::size_t>(size), '\0');
         file.read(content.data(), static_cast<std::streamsize>(size));
         if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
     }
 
@@ -84,10 +128,10 @@ namespace pjh::platform
     {
         std::ofstream file(p, std::ios::binary);
         if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         file.write(content.data(), static_cast<std::streamsize>(content.size()));
         if (!file)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
@@ -99,7 +143,7 @@ namespace pjh::platform
         for (const auto& entry : std::filesystem::directory_iterator(p, ec))
             entries.push_back(entry.path());
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(std::move(entries));
     }
 
@@ -120,7 +164,7 @@ namespace pjh::platform
             return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
                 std::filesystem::path(userprofile.unwrap()));
 #endif
-        return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+        return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
     }
 
 } // namespace pjh::platform
