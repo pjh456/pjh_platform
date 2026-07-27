@@ -30,7 +30,8 @@ namespace pjh::platform
         wvalue.pop_back();
         return pjh::result::Result<std::string, ErrorCode>::Ok(Encoding::to_utf8(wvalue));
 #else
-        const char* val = std::getenv(name.data());
+        auto n   = std::string(name);
+        const char* val = std::getenv(n.c_str());
         if (!val)
             return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::string(val));
