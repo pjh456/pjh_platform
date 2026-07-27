@@ -5,45 +5,51 @@
 
 #include <pjh_platform/fs.hpp>
 
-namespace fs = pjh::platform::fs;
+using pjh::platform::Fs;
 
-TEST_CASE("fs::current_path returns non-empty path") {
-    auto cwd = fs::current_path();
+TEST_CASE("Fs::current_path returns non-empty path")
+{
+    auto cwd = Fs::current_path();
     CHECK(!cwd.empty());
 }
 
-TEST_CASE("fs::temp_directory returns non-empty path") {
-    auto tmp = fs::temp_directory();
+TEST_CASE("Fs::temp_directory returns non-empty path")
+{
+    auto tmp = Fs::temp_directory();
     CHECK(!tmp.empty());
 }
 
-TEST_CASE("fs::create_directories and fs::exists") {
-    auto tmp = fs::temp_directory() / "pjh_platform_test_dir";
-    bool created = fs::create_directories(tmp);
-    CHECK(created);
-    CHECK(fs::exists(tmp));
-    CHECK(fs::is_directory(tmp));
+TEST_CASE("Fs::create_directories and Fs::exists")
+{
+    auto tmp = Fs::temp_directory() / "pjh_platform_test_dir";
+    auto r = Fs::create_directories(tmp);
+    CHECK(r.is_ok());
+    CHECK(Fs::exists(tmp));
+    CHECK(Fs::is_directory(tmp));
     std::filesystem::remove_all(tmp);
 }
 
-TEST_CASE("fs::write_file and fs::read_file round-trip") {
-    auto tmp = fs::temp_directory() / "pjh_platform_test_file.txt";
-    auto err = fs::write_file(tmp, "hello pjh_platform");
-    CHECK(!err);
+TEST_CASE("Fs::write_file and Fs::read_file round-trip")
+{
+    auto tmp = Fs::temp_directory() / "pjh_platform_test_file.txt";
+    auto r = Fs::write_file(tmp, "hello pjh_platform");
+    CHECK(r.is_ok());
 
-    auto content = fs::read_file(tmp);
-    REQUIRE(content.has_value());
-    CHECK_EQ(*content, "hello pjh_platform");
+    auto content = Fs::read_file(tmp);
+    REQUIRE(content.is_ok());
+    CHECK_EQ(content.unwrap(), "hello pjh_platform");
 
     std::filesystem::remove(tmp);
 }
 
-TEST_CASE("fs::read_file returns nullopt for non-existent file") {
-    auto content = fs::read_file("/nonexistent/path/file.txt");
-    CHECK(!content.has_value());
+TEST_CASE("Fs::read_file returns not_found for non-existent file")
+{
+    auto content = Fs::read_file("/nonexistent/path/file.txt");
+    CHECK(content.is_err());
 }
 
-TEST_CASE("fs::home_directory returns something on typical systems") {
-    auto home = fs::home_directory();
-    CHECK(home.has_value());
+TEST_CASE("Fs::home_directory returns something on typical systems")
+{
+    auto home = Fs::home_directory();
+    CHECK(home.is_ok());
 }
