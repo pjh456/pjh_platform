@@ -19,21 +19,25 @@ jobs:
             cc: gcc
             cxx: g++
             ccache_variant: ccache
+            cmake_args: ""
           - name: Linux (Clang)
             os: ubuntu-latest
             cc: clang
             cxx: clang++
             ccache_variant: ccache
+            cmake_args: ""
           - name: macOS
             os: macos-latest
             cc: clang
             cxx: clang++
             ccache_variant: ccache
+            cmake_args: ""
           - name: Windows (MSVC)
             os: windows-latest
             cc: cl
             cxx: cl
             ccache_variant: sccache
+            cmake_args: -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +64,7 @@ jobs:
           CXX: ${{ matrix.cxx }}
           CMAKE_C_COMPILER_LAUNCHER: ${{ matrix.ccache_variant }}
           CMAKE_CXX_COMPILER_LAUNCHER: ${{ matrix.ccache_variant }}
-        run: cmake -B build -G Ninja
+        run: cmake -B build -G Ninja ${{ matrix.cmake_args }}
 
       - name: Build
         run: cmake --build build --parallel
