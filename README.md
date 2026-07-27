@@ -41,7 +41,7 @@ auto cwd = plat::fs::current_path();
 bool ok = plat::fs::create_directories("/tmp/mydir");
 
 // OS detection
-if constexpr (plat::os::is_linux) {
+if constexpr (plat::Os::is_linux) {
     // Linux-specific path
 }
 ```
@@ -52,7 +52,7 @@ if constexpr (plat::os::is_linux) {
 |--------|--------|-------------|
 | `pjh::platform::env` | `pjh_platform/env.hpp` | Environment variable get/set/iterate |
 | `pjh::platform::fs` | `pjh_platform/fs.hpp` | Filesystem path & file operations |
-| `pjh::platform::os` | `pjh_platform/os.hpp` | Compile-time & runtime OS detection |
+| `pjh::platform::Os` | `pjh_platform/os.hpp` | Compile-time & runtime OS detection |
 | `pjh::platform::error` | `pjh_platform/error.hpp` | Platform error codes & result type |
 
 ## Building tests & examples
