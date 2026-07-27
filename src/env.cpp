@@ -17,6 +17,38 @@ namespace pjh::platform
 
     // ── Env ──────────────────────────────────────────────────────────────
 
+    namespace {
+        template <typename Func>
+        void for_each_env_entry(Func&& func)
+        {
+#if PJH_PLATFORM_WINDOWS
+            auto* block = GetEnvironmentStringsW();
+            if (!block)
+                return;
+            for (auto* env = block; *env; env += std::wcslen(env) + 1)
+            {
+                std::wstring_view entry(env);
+                auto eq = entry.find(L'=');
+                if (eq != std::wstring_view::npos)
+                    func(Encoding::to_utf8(entry.substr(0, eq)),
+                         Encoding::to_utf8(entry.substr(eq + 1)));
+            }
+            FreeEnvironmentStringsW(block);
+#else
+            if (!environ)
+                return;
+            for (auto** env = environ; *env; ++env)
+            {
+                std::string_view entry(*env);
+                auto eq = entry.find('=');
+                if (eq != std::string_view::npos)
+                    func(std::string(entry.substr(0, eq)),
+                         std::string(entry.substr(eq + 1)));
+            }
+#endif
+        }
+    }
+
     auto Env::get(std::string_view name)
         -> pjh::result::Result<std::string, ErrorCode>
     {
@@ -76,33 +108,9 @@ namespace pjh::platform
         -> std::unordered_map<std::string, std::string>
     {
         std::unordered_map<std::string, std::string> m;
-
-#if PJH_PLATFORM_WINDOWS
-        auto* block = GetEnvironmentStringsW();
-        if (!block)
-            return m;
-        for (auto* env = block; *env; env += std::wcslen(env) + 1)
-        {
-            std::wstring_view entry(env);
-            auto eq = entry.find(L'=');
-            if (eq != std::wstring_view::npos)
-                m.emplace(
-                    Encoding::to_utf8(entry.substr(0, eq)),
-                    Encoding::to_utf8(entry.substr(eq + 1)));
-        }
-        FreeEnvironmentStringsW(block);
-#else
-        if (!environ)
-            return m;
-        for (auto** env = environ; *env; ++env)
-        {
-            std::string_view entry(*env);
-            auto eq = entry.find('=');
-            if (eq != std::string_view::npos)
-                m.emplace(entry.substr(0, eq), entry.substr(eq + 1));
-        }
-#endif
-
+        for_each_env_entry([&](auto&& k, auto&& v) {
+            m.emplace(std::move(k), std::move(v));
+        });
         return m;
     }
 
@@ -110,33 +118,9 @@ namespace pjh::platform
         -> std::vector<std::pair<std::string, std::string>>
     {
         std::vector<std::pair<std::string, std::string>> result;
-
-#if PJH_PLATFORM_WINDOWS
-        auto* block = GetEnvironmentStringsW();
-        if (!block)
-            return result;
-        for (auto* env = block; *env; env += std::wcslen(env) + 1)
-        {
-            std::wstring_view entry(env);
-            auto eq = entry.find(L'=');
-            if (eq != std::wstring_view::npos)
-                result.emplace_back(
-                    Encoding::to_utf8(entry.substr(0, eq)),
-                    Encoding::to_utf8(entry.substr(eq + 1)));
-        }
-        FreeEnvironmentStringsW(block);
-#else
-        if (!environ)
-            return result;
-        for (auto** env = environ; *env; ++env)
-        {
-            std::string_view entry(*env);
-            auto eq = entry.find('=');
-            if (eq != std::string_view::npos)
-                result.emplace_back(entry.substr(0, eq), entry.substr(eq + 1));
-        }
-#endif
-
+        for_each_env_entry([&](auto&& k, auto&& v) {
+            result.emplace_back(std::move(k), std::move(v));
+        });
         return result;
     }
 
