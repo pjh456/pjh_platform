@@ -1,5 +1,8 @@
-#include "pjh_platform/env.hpp"
-#include "doctest/doctest.h"
+#include <doctest/doctest.h>
+
+#include <iostream>
+
+#include <pjh_platform/env.hpp>
 
 namespace env = pjh::platform::env;
 
