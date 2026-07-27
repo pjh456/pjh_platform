@@ -8,19 +8,42 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - name: Linux (GCC)
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+          - name: Linux (Clang)
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+          - name: macOS
+            os: macos-latest
+            cc: clang
+            cxx: clang++
+          - name: Windows (MSVC)
+            os: windows-latest
+            cc: cl
+            cxx: cl
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure CMake
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
         run: cmake -B build -G Ninja
 
       - name: Build
