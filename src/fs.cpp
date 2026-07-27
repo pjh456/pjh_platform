@@ -80,6 +80,35 @@ namespace pjh::platform
     auto Fs::remove_all(const std::filesystem::path& p)
         -> pjh::result::Result<std::uintmax_t, ErrorCode>
     {
+#if PJH_PLATFORM_WINDOWS
+        // std::filesystem::remove_all fails on read-only files (common
+        // in .git directories). Clear FILE_ATTRIBUTE_READONLY first.
+        {
+            std::error_code dir_ec;
+            for (auto it = std::filesystem::recursive_directory_iterator(
+                     p,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     dir_ec);
+                 it != std::filesystem::recursive_directory_iterator();
+                 ++it)
+            {
+                if (dir_ec)
+                {
+                    dir_ec.clear();
+                    continue;
+                }
+                DWORD attrs = GetFileAttributesW(it->path().c_str());
+                if (attrs != INVALID_FILE_ATTRIBUTES &&
+                    (attrs & FILE_ATTRIBUTE_READONLY))
+                {
+                    SetFileAttributesW(
+                        it->path().c_str(),
+                        attrs & ~FILE_ATTRIBUTE_READONLY);
+                }
+            }
+        }
+#endif
+
         std::error_code ec;
         auto count = std::filesystem::remove_all(p, ec);
         if (ec)

@@ -64,6 +64,35 @@ TEST_CASE("Fs::remove_all removes directory and returns count")
     CHECK(!Fs::exists(tmp));
 }
 
+TEST_CASE("Fs::remove_all handles read-only files")
+{
+    // This test is especially important on Windows where
+    // std::filesystem::remove_all cannot delete read-only files
+    // (e.g., inside .git directories).
+    auto tmp = Fs::temp_directory() / "pjh_platform_test_remove_readonly";
+    std::filesystem::create_directories(tmp);
+
+    auto f1 = tmp / "readonly.txt";
+    auto w1 = Fs::write_file(f1, "read only content");
+    REQUIRE(w1.is_ok());
+    std::filesystem::permissions(
+        f1, std::filesystem::perms::owner_read,
+        std::filesystem::perm_options::replace);
+
+    auto sub = tmp / "subdir";
+    std::filesystem::create_directories(sub);
+    auto f2 = sub / "nested_readonly.txt";
+    auto w2 = Fs::write_file(f2, "nested content");
+    REQUIRE(w2.is_ok());
+    std::filesystem::permissions(
+        f2, std::filesystem::perms::owner_read,
+        std::filesystem::perm_options::replace);
+
+    auto r = Fs::remove_all(tmp);
+    CHECK(r.is_ok());
+    CHECK(!Fs::exists(tmp));
+}
+
 TEST_CASE("Fs::remove_all on non-existent path returns 0")
 {
     auto r = Fs::remove_all("/nonexistent_path_12345");
