@@ -7,6 +7,10 @@
 #include <fstream>
 #include <iterator>
 
+#if PJH_PLATFORM_WINDOWS
+#include <windows.h>
+#endif
+
 namespace pjh::platform
 {
 
