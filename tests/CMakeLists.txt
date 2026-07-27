@@ -3,6 +3,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/doctest ${CMAKE_BINAR
 
 set(PJH_PLATFORM_TEST_SOURCES
     test_main.cpp
+    test_platform.cpp
     test_env.cpp
     test_fs.cpp
 )
