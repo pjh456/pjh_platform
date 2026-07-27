@@ -36,8 +36,8 @@ jobs:
             os: windows-latest
             cc: cl
             cxx: cl
-            ccache_variant: sccache
-            cmake_args: -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
+            ccache_variant: ccache
+            cmake_args: ""
 
     steps:
       - uses: actions/checkout@v4
