@@ -1,58 +1,141 @@
-#include "pjh_platform/env.hpp"
-#include "pjh_platform/error.hpp"
-#include "pjh_platform/os.hpp"
+#include <pjh_platform/env.hpp>
+#include <pjh_platform/detail/encoding.hpp>
+#include <pjh_platform/error.hpp>
+#include <pjh_platform/platform.hpp>
 
 #include <cstdlib>
 #include <cstring>
 
-#if defined(_WIN32) || defined(_WIN64)
-    #include <windows.h>
-#endif
-
-namespace pjh::platform::env {
-
-auto get(std::string_view name) -> std::optional<std::string> {
-#if defined(_WIN32) || defined(_WIN64)
-    std::string n(name);
-    DWORD len = GetEnvironmentVariableA(n.c_str(), nullptr, 0);
-    if (len == 0) return std::nullopt;
-    std::string value(len, '\0');
-    GetEnvironmentVariableA(n.c_str(), value.data(), static_cast<DWORD>(value.size()));
-    value.pop_back();
-    return value;
+#if PJH_PLATFORM_WINDOWS
+#include <windows.h>
 #else
-    const char* val = std::getenv(name.data());
-    if (!val) return std::nullopt;
-    return std::string(val);
+#include <cerrno>
+extern "C" char** environ;
 #endif
-}
 
-auto set(std::string_view name, std::string_view value) -> std::error_code {
-#if defined(_WIN32) || defined(_WIN64)
-    std::string n(name), v(value);
-    if (!SetEnvironmentVariableA(n.c_str(), v.c_str()))
-        return errc::io_error;
-    return {};
+namespace pjh::platform
+{
+
+    // ── Env ──────────────────────────────────────────────────────────────
+
+    auto Env::get(std::string_view name) -> std::optional<std::string>
+    {
+#if PJH_PLATFORM_WINDOWS
+        auto wname = Encoding::to_wide(name);
+        DWORD len = GetEnvironmentVariableW(wname.c_str(), nullptr, 0);
+        if (len == 0)
+            return std::nullopt;
+        std::wstring wvalue(static_cast<std::size_t>(len), L'\0');
+        GetEnvironmentVariableW(wname.c_str(), wvalue.data(), len);
+        wvalue.pop_back();
+        return Encoding::to_utf8(wvalue);
 #else
-    std::string n(name), v(value);
-    if (::setenv(n.c_str(), v.c_str(), 1) != 0)
-        return errc::io_error;
-    return {};
+        const char* val = std::getenv(name.data());
+        if (!val)
+            return std::nullopt;
+        return std::string(val);
 #endif
-}
+    }
 
-auto unset(std::string_view name) -> std::error_code {
-#if defined(_WIN32) || defined(_WIN64)
-    std::string n(name);
-    if (!SetEnvironmentVariableA(n.c_str(), nullptr))
-        return errc::io_error;
-    return {};
+    auto Env::set(std::string_view name, std::string_view value)
+        -> std::error_code
+    {
+#if PJH_PLATFORM_WINDOWS
+        auto wname  = Encoding::to_wide(name);
+        auto wvalue = Encoding::to_wide(value);
+        if (!SetEnvironmentVariableW(wname.c_str(), wvalue.c_str()))
+            return errc::io_error;
+        return {};
 #else
-    std::string n(name);
-    if (::unsetenv(n.c_str()) != 0)
-        return errc::io_error;
-    return {};
+        auto n = std::string(name);
+        auto v = std::string(value);
+        if (::setenv(n.c_str(), v.c_str(), 1) != 0)
+            return errc::io_error;
+        return {};
 #endif
-}
+    }
 
-} // namespace pjh::platform::env
+    auto Env::unset(std::string_view name) -> std::error_code
+    {
+#if PJH_PLATFORM_WINDOWS
+        auto wname = Encoding::to_wide(name);
+        if (!SetEnvironmentVariableW(wname.c_str(), nullptr))
+            return errc::io_error;
+        return {};
+#else
+        auto n = std::string(name);
+        if (::unsetenv(n.c_str()) != 0)
+            return errc::io_error;
+        return {};
+#endif
+    }
+
+    auto Env::snapshot()
+        -> std::unordered_map<std::string, std::string>
+    {
+        std::unordered_map<std::string, std::string> m;
+
+#if PJH_PLATFORM_WINDOWS
+        auto* block = GetEnvironmentStringsW();
+        if (!block)
+            return m;
+        for (auto* env = block; *env; env += std::wcslen(env) + 1)
+        {
+            std::wstring_view entry(env);
+            auto eq = entry.find(L'=');
+            if (eq != std::wstring_view::npos)
+                m.emplace(
+                    Encoding::to_utf8(entry.substr(0, eq)),
+                    Encoding::to_utf8(entry.substr(eq + 1)));
+        }
+        FreeEnvironmentStringsW(block);
+#else
+        if (!environ)
+            return m;
+        for (auto** env = environ; *env; ++env)
+        {
+            std::string_view entry(*env);
+            auto eq = entry.find('=');
+            if (eq != std::string_view::npos)
+                m.emplace(entry.substr(0, eq), entry.substr(eq + 1));
+        }
+#endif
+
+        return m;
+    }
+
+    auto Env::list()
+        -> std::vector<std::pair<std::string, std::string>>
+    {
+        std::vector<std::pair<std::string, std::string>> result;
+
+#if PJH_PLATFORM_WINDOWS
+        auto* block = GetEnvironmentStringsW();
+        if (!block)
+            return result;
+        for (auto* env = block; *env; env += std::wcslen(env) + 1)
+        {
+            std::wstring_view entry(env);
+            auto eq = entry.find(L'=');
+            if (eq != std::wstring_view::npos)
+                result.emplace_back(
+                    Encoding::to_utf8(entry.substr(0, eq)),
+                    Encoding::to_utf8(entry.substr(eq + 1)));
+        }
+        FreeEnvironmentStringsW(block);
+#else
+        if (!environ)
+            return result;
+        for (auto** env = environ; *env; ++env)
+        {
+            std::string_view entry(*env);
+            auto eq = entry.find('=');
+            if (eq != std::string_view::npos)
+                result.emplace_back(entry.substr(0, eq), entry.substr(eq + 1));
+        }
+#endif
+
+        return result;
+    }
+
+} // namespace pjh::platform

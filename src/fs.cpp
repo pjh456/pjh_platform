@@ -1,6 +1,7 @@
-#include "pjh_platform/fs.hpp"
-#include "pjh_platform/env.hpp"
-#include "pjh_platform/error.hpp"
+#include <pjh_platform/env.hpp>
+#include <pjh_platform/error.hpp>
+#include <pjh_platform/fs.hpp>
+#include <pjh_platform/platform.hpp>
 
 #include <fstream>
 #include <iterator>
@@ -71,10 +72,10 @@ auto temp_directory() -> std::filesystem::path {
 }
 
 auto home_directory() -> std::optional<std::filesystem::path> {
-    auto home = env::get("HOME");
+    auto home = Env::get("HOME");
     if (home) return std::filesystem::path(*home);
-#if defined(_WIN32) || defined(_WIN64)
-    auto userprofile = env::get("USERPROFILE");
+#if PJH_PLATFORM_WINDOWS
+    auto userprofile = Env::get("USERPROFILE");
     if (userprofile) return std::filesystem::path(*userprofile);
 #endif
     return std::nullopt;

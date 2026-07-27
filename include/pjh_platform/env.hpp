@@ -5,15 +5,31 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
+#include <vector>
 
-namespace pjh::platform::env {
+namespace pjh::platform
+{
 
-auto get(std::string_view name) -> std::optional<std::string>;
+    class Env
+    {
+        Env() = delete;
 
-auto set(std::string_view name, std::string_view value) -> std::error_code;
+    public:
+        [[nodiscard]] static auto get(std::string_view name)
+            -> std::optional<std::string>;
 
-auto unset(std::string_view name) -> std::error_code;
+        static auto set(std::string_view name, std::string_view value) -> std::error_code;
 
-} // namespace pjh::platform::env
+        static auto unset(std::string_view name) -> std::error_code;
 
-#endif // INCLUDE_PJH_PLATFORM_ENV_HPP
+        [[nodiscard]] static auto snapshot()
+            -> std::unordered_map<std::string, std::string>;
+
+        [[nodiscard]] static auto list()
+            -> std::vector<std::pair<std::string, std::string>>;
+    };
+
+}  // namespace pjh::platform
+
+#endif  // INCLUDE_PJH_PLATFORM_ENV_HPP
