@@ -26,7 +26,9 @@ namespace pjh::platform
                 case EPERM:   return ErrorCode::PermissionDenied;
                 case EEXIST:  return ErrorCode::AlreadyExists;
                 case EINVAL:  return ErrorCode::InvalidArgument;
+#ifdef ENOTSUP
                 case ENOTSUP: return ErrorCode::NotSupported;
+#endif
                 case EIO:     return ErrorCode::IoError;
                 default:      return ErrorCode::Unknown;
                 }
@@ -74,7 +76,12 @@ namespace pjh::platform
         std::error_code ec;
         auto count = std::filesystem::remove_all(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+        {
+            auto mapped = map_error_code(ec);
+            if (mapped == ErrorCode::NotFound)
+                return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(0);
+            return pjh::result::Failure<ErrorCode>{mapped};
+        }
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(count);
     }
 
