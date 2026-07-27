@@ -1,4 +1,4 @@
-#include <pjh_platform/detail/encoding.hpp>
+#include <pjh_platform/encoding.hpp>
 #include <pjh_platform/env.hpp>
 #include <pjh_platform/platform.hpp>
 

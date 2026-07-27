@@ -1,5 +1,5 @@
-#ifndef INCLUDE_PJH_PLATFORM_DETAIL_ENCODING_HPP
-#define INCLUDE_PJH_PLATFORM_DETAIL_ENCODING_HPP
+#ifndef INCLUDE_PJH_PLATFORM_ENCODING_HPP
+#define INCLUDE_PJH_PLATFORM_ENCODING_HPP
 
 #include <cstdint>
 #include <pjh_platform/platform.hpp>
@@ -10,7 +10,7 @@
 #include <windows.h>
 #endif
 
-namespace pjh::platform::detail
+namespace pjh::platform
 {
 
     class Encoding
@@ -149,6 +149,6 @@ namespace pjh::platform::detail
 #endif
     }
 
-}  // namespace pjh::platform::detail
+}  // namespace pjh::platform
 
-#endif  // INCLUDE_PJH_PLATFORM_DETAIL_ENCODING_HPP
+#endif  // INCLUDE_PJH_PLATFORM_ENCODING_HPP

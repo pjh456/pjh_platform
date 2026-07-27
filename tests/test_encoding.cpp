@@ -2,9 +2,9 @@
 
 #include <doctest/doctest.h>
 
-#include <pjh_platform/detail/encoding.hpp>
+#include <pjh_platform/encoding.hpp>
 
-using enc = pjh::platform::detail::Encoding;
+using enc = pjh::platform::Encoding;
 
 TEST_CASE("Encoding::to_wide / to_utf8 round-trip: empty string")
 {
