@@ -1,12 +1,14 @@
 #ifndef INCLUDE_PJH_PLATFORM_ERROR_HPP
 #define INCLUDE_PJH_PLATFORM_ERROR_HPP
 
-#include <system_error>
+#include <pjh_result/result.hpp>
+
 #include <string>
+#include <system_error>
 
 namespace pjh::platform {
 
-enum class errc {
+enum class ErrorCode {
     success = 0,
     not_found,
     permission_denied,
@@ -17,19 +19,19 @@ enum class errc {
     unknown,
 };
 
-inline std::error_code make_error_code(errc e) noexcept {
+inline std::error_code make_error_code(ErrorCode e) noexcept {
     static const struct : std::error_category {
         const char* name() const noexcept override { return "pjh_platform"; }
         std::string message(int c) const override {
-            switch (static_cast<errc>(c)) {
-                case errc::success: return "success";
-                case errc::not_found: return "not found";
-                case errc::permission_denied: return "permission denied";
-                case errc::already_exists: return "already exists";
-                case errc::invalid_argument: return "invalid argument";
-                case errc::not_supported: return "not supported";
-                case errc::io_error: return "I/O error";
-                case errc::unknown: return "unknown error";
+            switch (static_cast<ErrorCode>(c)) {
+                case ErrorCode::success: return "success";
+                case ErrorCode::not_found: return "not found";
+                case ErrorCode::permission_denied: return "permission denied";
+                case ErrorCode::already_exists: return "already exists";
+                case ErrorCode::invalid_argument: return "invalid argument";
+                case ErrorCode::not_supported: return "not supported";
+                case ErrorCode::io_error: return "I/O error";
+                case ErrorCode::unknown: return "unknown error";
                 default: return "unrecognized error";
             }
         }
@@ -40,7 +42,7 @@ inline std::error_code make_error_code(errc e) noexcept {
 } // namespace pjh::platform
 
 namespace std {
-    template<> struct is_error_code_enum<pjh::platform::errc> : true_type {};
+    template<> struct is_error_code_enum<pjh::platform::ErrorCode> : true_type {};
 }
 
 #endif // INCLUDE_PJH_PLATFORM_ERROR_HPP

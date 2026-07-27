@@ -1,6 +1,5 @@
-#include <pjh_platform/env.hpp>
 #include <pjh_platform/detail/encoding.hpp>
-#include <pjh_platform/error.hpp>
+#include <pjh_platform/env.hpp>
 #include <pjh_platform/platform.hpp>
 
 #include <cstdlib>
@@ -18,55 +17,57 @@ namespace pjh::platform
 
     // ── Env ──────────────────────────────────────────────────────────────
 
-    auto Env::get(std::string_view name) -> std::optional<std::string>
+    auto Env::get(std::string_view name)
+        -> pjh::result::Result<std::string, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         auto wname = Encoding::to_wide(name);
         DWORD len = GetEnvironmentVariableW(wname.c_str(), nullptr, 0);
         if (len == 0)
-            return std::nullopt;
+            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
         std::wstring wvalue(static_cast<std::size_t>(len), L'\0');
         GetEnvironmentVariableW(wname.c_str(), wvalue.data(), len);
         wvalue.pop_back();
-        return Encoding::to_utf8(wvalue);
+        return pjh::result::Result<std::string, ErrorCode>::Ok(Encoding::to_utf8(wvalue));
 #else
         const char* val = std::getenv(name.data());
         if (!val)
-            return std::nullopt;
-        return std::string(val);
+            return pjh::result::Failure<ErrorCode>{ErrorCode::not_found};
+        return pjh::result::Result<std::string, ErrorCode>::Ok(std::string(val));
 #endif
     }
 
     auto Env::set(std::string_view name, std::string_view value)
-        -> std::error_code
+        -> pjh::result::Result<void, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         auto wname  = Encoding::to_wide(name);
         auto wvalue = Encoding::to_wide(value);
         if (!SetEnvironmentVariableW(wname.c_str(), wvalue.c_str()))
-            return errc::io_error;
-        return {};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+        return pjh::result::Result<void, ErrorCode>::Ok();
 #else
         auto n = std::string(name);
         auto v = std::string(value);
         if (::setenv(n.c_str(), v.c_str(), 1) != 0)
-            return errc::io_error;
-        return {};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+        return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
     }
 
-    auto Env::unset(std::string_view name) -> std::error_code
+    auto Env::unset(std::string_view name)
+        -> pjh::result::Result<void, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         auto wname = Encoding::to_wide(name);
         if (!SetEnvironmentVariableW(wname.c_str(), nullptr))
-            return errc::io_error;
-        return {};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+        return pjh::result::Result<void, ErrorCode>::Ok();
 #else
         auto n = std::string(name);
         if (::unsetenv(n.c_str()) != 0)
-            return errc::io_error;
-        return {};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::io_error};
+        return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
     }
 

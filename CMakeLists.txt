@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(pjh_platform LANGUAGES CXX)
 
+add_subdirectory(thirdparty/pjh_result EXCLUDE_FROM_ALL)
+
 add_library(pjh_platform)
 target_sources(pjh_platform
     PRIVATE
@@ -12,6 +14,7 @@ target_include_directories(pjh_platform
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 target_compile_features(pjh_platform PUBLIC cxx_std_20)
+target_link_libraries(pjh_platform PUBLIC pjh_result)
 
 option(PJH_PLATFORM_BUILD_TESTS "Build tests" ${PROJECT_IS_TOP_LEVEL})
 option(PJH_PLATFORM_BUILD_EXAMPLES "Build examples" OFF)

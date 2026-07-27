@@ -4,38 +4,38 @@
 
 using pjh::platform::Env;
 
-TEST_CASE("Env::get returns nullopt for non-existent variable")
+TEST_CASE("Env::get returns not_found for non-existent variable")
 {
     auto val = Env::get("__NONEXISTENT_VAR_12345__");
-    CHECK(!val.has_value());
+    CHECK(val.is_err());
 }
 
 TEST_CASE("Env::set and Env::get round-trip")
 {
-    auto err = Env::set("__TEST_PJH_VAR__", "hello_world");
-    CHECK(!err);
+    auto r = Env::set("__TEST_PJH_VAR__", "hello_world");
+    CHECK(r.is_ok());
 
     auto val = Env::get("__TEST_PJH_VAR__");
-    REQUIRE(val.has_value());
-    CHECK_EQ(*val, "hello_world");
+    REQUIRE(val.is_ok());
+    CHECK_EQ(val.unwrap(), "hello_world");
 }
 
 TEST_CASE("Env::unset removes variable")
 {
-    Env::set("__TEST_PJH_VAR__", "temp");
+    (void)Env::set("__TEST_PJH_VAR__", "temp");
     auto val = Env::get("__TEST_PJH_VAR__");
-    REQUIRE(val.has_value());
+    REQUIRE(val.is_ok());
 
-    auto err = Env::unset("__TEST_PJH_VAR__");
-    CHECK(!err);
+    auto r = Env::unset("__TEST_PJH_VAR__");
+    CHECK(r.is_ok());
 
     val = Env::get("__TEST_PJH_VAR__");
-    CHECK(!val.has_value());
+    CHECK(val.is_err());
 }
 
 TEST_CASE("Env::snapshot contains expected variables")
 {
-    Env::set("__TEST_PJH_SNAP__", "snap_value");
+    (void)Env::set("__TEST_PJH_SNAP__", "snap_value");
 
     auto snap = Env::snapshot();
     CHECK_GE(snap.size(), 1);
@@ -47,7 +47,7 @@ TEST_CASE("Env::snapshot contains expected variables")
 
 TEST_CASE("Env::list returns all environment variables")
 {
-    Env::set("__TEST_PJH_LIST__", "list_value");
+    (void)Env::set("__TEST_PJH_LIST__", "list_value");
 
     auto entries = Env::list();
     CHECK_GE(entries.size(), 1);
