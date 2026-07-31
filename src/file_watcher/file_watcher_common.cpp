@@ -136,6 +136,14 @@ namespace pjh::platform::detail
         FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir)
         -> pjh::result::Result<void, ErrorCode>
     {
+        std::error_code sec;
+        auto real = std::filesystem::weakly_canonical(dir, sec);
+        if (sec)
+            real = dir;
+        for (const auto &dw : entry.dirs)
+            if (dw.real_path == real)
+                return pjh::result::Result<void, ErrorCode>::Ok();
+
         int fd = ::open(dir.c_str(), O_RDONLY | O_EVTONLY);
         if (fd == -1)
             return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
@@ -153,6 +161,7 @@ namespace pjh::platform::detail
         WatchEntry::DirWatch dw;
         dw.fd = fd;
         dw.dir_path = dir;
+        dw.real_path = real;
         build_snapshot(dir, dw.snapshot);
 
         // A directory's NOTE_WRITE does not fire when a file's contents
@@ -210,7 +219,7 @@ namespace pjh::platform::detail
             }
             FileStamp stamp;
             std::error_code sec;
-            auto type = it->symlink_status(sec).type();
+            auto type = it->status(sec).type();
             if (sec)
                 continue;
             stamp.is_dir = type == std::filesystem::file_type::directory;

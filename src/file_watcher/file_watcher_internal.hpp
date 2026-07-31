@@ -73,6 +73,8 @@ namespace pjh::platform
             {
                 int fd = -1;
                 std::filesystem::path dir_path;
+                /// @brief Canonical path used to detect symlink cycles.
+                std::filesystem::path real_path;
                 std::map<std::filesystem::path, FileStamp> snapshot;
                 /// @brief Maps an entry filename to the fd watching that file.
                 std::map<std::filesystem::path, int> file_fds;

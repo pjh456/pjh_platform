@@ -86,7 +86,7 @@ namespace pjh::platform
                         continue;
                     }
                     std::error_code sec;
-                    if (!it->is_directory(sec))
+                    if (!std::filesystem::is_directory(it->path(), sec))
                         continue;
                     if (is_path_watched(entry, it->path()))
                         continue;
