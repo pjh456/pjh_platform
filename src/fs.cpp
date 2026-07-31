@@ -74,6 +74,49 @@ namespace pjh::platform
             return ErrorCode::Unknown;
         }
 
+        auto is_cross_device(const std::error_code &ec) -> bool
+        {
+#if PJH_PLATFORM_WINDOWS
+            if (ec.category() == std::system_category() &&
+                static_cast<unsigned long>(ec.value()) == ERROR_NOT_SAME_DEVICE)
+                return true;
+            return false;
+#else
+            return ec.category() == std::generic_category() && ec.value() == EXDEV;
+#endif
+        }
+
+        auto rename_via_copy(
+            const std::filesystem::path &from,
+            const std::filesystem::path &to,
+            bool overwrite) -> pjh::result::Result<void, ErrorCode>
+        {
+            std::error_code ec;
+            if (std::filesystem::is_directory(from, ec))
+            {
+                if (ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                auto copied = Fs::copy_directory(from, to, overwrite);
+                if (copied.is_err())
+                    return copied;
+                auto removed = Fs::remove_all(from);
+                if (removed.is_err())
+                    return pjh::result::Failure<ErrorCode>{removed.unwrap_err()};
+                return pjh::result::Result<void, ErrorCode>::Ok();
+            }
+            if (ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+
+            auto copied = Fs::copy_file(from, to, overwrite);
+            if (copied.is_err())
+                return copied;
+            std::error_code rem_ec;
+            std::filesystem::remove(from, rem_ec);
+            if (rem_ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(rem_ec)};
+            return pjh::result::Result<void, ErrorCode>::Ok();
+        }
+
     }
 
     auto Fs::current_path() -> std::filesystem::path
@@ -359,6 +402,73 @@ namespace pjh::platform
         if (ec)
             return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<void, ErrorCode>::Ok();
+    }
+
+    auto Fs::rename(
+        const std::filesystem::path &from,
+        const std::filesystem::path &to,
+        bool overwrite) -> pjh::result::Result<void, ErrorCode>
+    {
+        if (from == to)
+            return pjh::result::Result<void, ErrorCode>::Ok();
+
+        std::error_code ec;
+        if (!std::filesystem::exists(from, ec))
+        {
+            if (ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+        }
+
+        if (!overwrite)
+        {
+            std::error_code to_ec;
+            if (std::filesystem::exists(to, to_ec))
+            {
+                if (to_ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(to_ec)};
+                return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
+            }
+        }
+        else if (std::filesystem::is_directory(to, ec))
+        {
+            // A directory target can only be replaced when it is empty.
+            std::error_code iter_ec;
+            bool empty = std::filesystem::directory_iterator(to, iter_ec) ==
+                         std::filesystem::directory_iterator();
+            if (iter_ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+            if (!empty)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
+            std::filesystem::remove(to, iter_ec);
+            if (iter_ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+        }
+        if (ec)
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+
+#if PJH_PLATFORM_WINDOWS
+        DWORD flags = MOVEFILE_COPY_ALLOWED;
+        if (overwrite)
+            flags |= MOVEFILE_REPLACE_EXISTING;
+        if (MoveFileExW(from.c_str(), to.c_str(), flags))
+            return pjh::result::Result<void, ErrorCode>::Ok();
+
+        DWORD err = GetLastError();
+        if (is_cross_device(std::error_code(
+                static_cast<int>(err), std::system_category())))
+            return rename_via_copy(from, to, overwrite);
+        return pjh::result::Failure<ErrorCode>{
+            map_error_code(std::error_code(static_cast<int>(err), std::system_category()))};
+#else
+        if (::rename(from.c_str(), to.c_str()) == 0)
+            return pjh::result::Result<void, ErrorCode>::Ok();
+
+        std::error_code err_ec(errno, std::generic_category());
+        if (is_cross_device(err_ec))
+            return rename_via_copy(from, to, overwrite);
+        return pjh::result::Failure<ErrorCode>{map_error_code(err_ec)};
+#endif
     }
 
     auto Fs::list_directory(const std::filesystem::path &p)

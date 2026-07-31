@@ -279,6 +279,44 @@ namespace pjh::platform
             bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
 
         /**
+         * @brief Renames or moves @p from to @p to.
+         *
+         * @details Within the same filesystem the rename is atomic (POSIX
+         *          `rename`, Windows `MoveFileExW`). When @p from and @p to
+         *          live on different filesystems the native call fails with a
+         *          cross-device error (`EXDEV` / `ERROR_NOT_SAME_DEVICE`) and
+         *          this function transparently falls back to copy-then-delete.
+         *          When @p overwrite is `false` (the default) the operation
+         *          fails with `AlreadyExists` if @p to already exists; when
+         *          `true` an existing @p to is replaced. An existing target
+         *          directory is only replaced when it is empty. Renaming a path
+         *          onto itself is a no-op success.
+         *
+         * @param from Source path.
+         * @param to Destination path.
+         * @param overwrite When `true`, replace an existing @p to instead of
+         *                  failing.
+         *
+         * @return `Ok()` on success; `Failure(NotFound)` if @p from does not
+         *         exist, `Failure(AlreadyExists)` if @p to exists and @p
+         *         overwrite is `false` (or @p to is a non-empty directory),
+         *         `Failure(PermissionDenied)` on access errors, or other mapped
+         *         errors otherwise.
+         *
+         * @exception Never throws.
+         *
+         * @sideeffect Moves or copies-and-deletes @p from; creates or replaces
+         *            @p to.
+         *
+         * @platform All supported platforms; cross-device fallback copies the
+         *           tree and removes the source.
+         */
+        static auto rename(
+            const std::filesystem::path &from,
+            const std::filesystem::path &to,
+            bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
+
+        /**
          * @brief Returns the immediate entries of directory @p p (non-recursive).
          *
          * @details Uses `std::filesystem::directory_iterator` with an

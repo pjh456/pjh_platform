@@ -191,6 +191,111 @@ TEST_CASE("Fs::copy_directory returns InvalidArgument when source is a file")
     std::filesystem::remove_all(dst);
 }
 
+TEST_CASE("Fs::rename moves a file")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_src.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_dst.txt";
+    REQUIRE(Fs::write_file(src, "rename me").is_ok());
+
+    auto r = Fs::rename(src, dst);
+    REQUIRE(r.is_ok());
+    CHECK(!Fs::exists(src));
+    CHECK(Fs::is_regular_file(dst));
+    auto read = Fs::read_file(dst);
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "rename me");
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename moves a directory")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_dir_src";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_dir_dst";
+    std::filesystem::create_directories(src);
+    REQUIRE(Fs::write_file(src / "a.txt", "aaa").is_ok());
+
+    auto r = Fs::rename(src, dst);
+    REQUIRE(r.is_ok());
+    CHECK(!Fs::exists(src));
+    CHECK(Fs::is_directory(dst));
+    auto read = Fs::read_file(dst / "a.txt");
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "aaa");
+
+    std::filesystem::remove_all(dst);
+}
+
+TEST_CASE("Fs::rename fails when destination exists without overwrite")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_src2.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_dst2.txt";
+    REQUIRE(Fs::write_file(src, "src").is_ok());
+    REQUIRE(Fs::write_file(dst, "dst").is_ok());
+
+    auto r = Fs::rename(src, dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::AlreadyExists);
+    CHECK(Fs::exists(src));
+
+    std::filesystem::remove(src);
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename overwrites existing destination")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_src3.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_dst3.txt";
+    REQUIRE(Fs::write_file(src, "new content").is_ok());
+    REQUIRE(Fs::write_file(dst, "old content").is_ok());
+
+    auto r = Fs::rename(src, dst, true);
+    REQUIRE(r.is_ok());
+    CHECK(!Fs::exists(src));
+
+    auto read = Fs::read_file(dst);
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "new content");
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename replaces an empty destination directory")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_src4.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_dst4_dir";
+    REQUIRE(Fs::write_file(src, "over dir").is_ok());
+    std::filesystem::create_directories(dst);
+
+    auto r = Fs::rename(src, dst, true);
+    REQUIRE(r.is_ok());
+    CHECK(Fs::is_regular_file(dst));
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename returns NotFound for non-existent source")
+{
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_missing_dst.txt";
+    auto r = Fs::rename("/nonexistent_path_12345", dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::NotFound);
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename to same path is a no-op")
+{
+    auto file = Fs::temp_directory() / "pjh_platform_test_rename_same.txt";
+    REQUIRE(Fs::write_file(file, "content").is_ok());
+
+    auto r = Fs::rename(file, file);
+    REQUIRE(r.is_ok());
+    CHECK(Fs::exists(file));
+
+    std::filesystem::remove(file);
+}
+
 TEST_CASE("Fs::home_directory returns something on typical systems")
 {
     auto home = Fs::home_directory();
