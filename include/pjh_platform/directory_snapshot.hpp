@@ -62,6 +62,10 @@ namespace pjh::platform
         struct Entry
         {
             /// @brief Whether the entry is a directory.
+            ///
+            /// @details Symbolic links are followed: a link to a directory is
+            ///          reported as a directory, a link to a regular file as a
+            ///          regular file. Broken links are skipped by `capture`.
             bool m_is_directory = false;
 
             /// @brief Size of a regular file in bytes (0 for directories).

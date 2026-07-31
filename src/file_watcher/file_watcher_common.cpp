@@ -15,7 +15,6 @@
 #endif
 
 #include <cstdint>
-#include <map>
 #include <utility>
 
 namespace pjh::platform::detail
@@ -162,12 +161,18 @@ namespace pjh::platform::detail
         dw.fd = fd;
         dw.dir_path = dir;
         dw.real_path = real;
-        build_snapshot(dir, dw.snapshot);
+        auto captured = DirectorySnapshot::capture(dir);
+        if (captured.is_err())
+        {
+            ::close(fd);
+            return pjh::result::Failure<ErrorCode>{captured.unwrap_err()};
+        }
+        dw.snapshot = std::move(captured).unwrap();
 
         // A directory's NOTE_WRITE does not fire when a file's contents
         // change, so every existing file gets its own vnode watch.
-        for (const auto &[name, stamp] : dw.snapshot)
-            if (!stamp.is_dir)
+        for (const auto &[name, stamp] : dw.snapshot.entries())
+            if (!stamp.m_is_directory)
                 (void)open_file_watch(impl, entry, dw, dir / name);
 
         entry.fd_to_dir[fd] = entry.dirs.insert(entry.dirs.end(), std::move(dw));
@@ -201,38 +206,6 @@ namespace pjh::platform::detail
                 entry.dirs.erase(it);
                 return;
             }
-        }
-    }
-
-    auto build_snapshot(
-        const std::filesystem::path &dir,
-        std::map<std::filesystem::path, FileStamp> &snapshot) -> void
-    {
-        std::error_code ec;
-        for (auto it = std::filesystem::directory_iterator(dir, ec);
-             it != std::filesystem::directory_iterator(); ++it)
-        {
-            if (ec)
-            {
-                ec.clear();
-                continue;
-            }
-            FileStamp stamp;
-            std::error_code sec;
-            auto type = it->status(sec).type();
-            if (sec)
-                continue;
-            stamp.is_dir = type == std::filesystem::file_type::directory;
-            if (!stamp.is_dir)
-            {
-                auto size = it->file_size(sec);
-                if (!sec)
-                    stamp.size = static_cast<std::intmax_t>(size);
-            }
-            auto mtime = it->last_write_time(sec);
-            if (!sec)
-                stamp.mtime_ns = static_cast<std::intmax_t>(mtime.time_since_epoch().count());
-            snapshot[it->path().filename()] = stamp;
         }
     }
 #endif

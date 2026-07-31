@@ -78,6 +78,26 @@ TEST_CASE("DirectorySnapshot reports NotFound for a missing directory")
     CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);
 }
 
+TEST_CASE("DirectorySnapshot follows symbolic links to directories")
+{
+#if PJH_PLATFORM_UNIX
+    auto p = make_test_dir();
+    REQUIRE(std::filesystem::create_directories(p / "real"));
+    std::error_code sec;
+    std::filesystem::create_symlink(p / "real", p / "link_to_dir", sec);
+    REQUIRE_FALSE(sec);
+    REQUIRE(pjh::platform::Fs::write_file(p / "real" / "inner.txt", "x").is_ok());
+
+    auto r = DirectorySnapshot::capture(p);
+    REQUIRE(r.is_ok());
+    auto snap = std::move(r).unwrap();
+
+    auto link = snap.get("link_to_dir");
+    REQUIRE(link.has_value());
+    CHECK(link->m_is_directory);
+#endif
+}
+
 TEST_CASE("DirectorySnapshot reports InvalidArgument for a regular file")
 {
     auto p = make_test_dir();

@@ -43,23 +43,25 @@ namespace pjh::platform
                 FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
                 std::vector<FileEvent> &out) -> void
             {
-                std::map<std::filesystem::path, FileStamp> current;
-                build_snapshot(dw.dir_path, current);
+                auto captured = DirectorySnapshot::capture(dw.dir_path);
+                if (captured.is_err())
+                    return;
+                DirectorySnapshot current = std::move(captured).unwrap();
 
-                for (const auto &[name, stamp] : current)
+                for (const auto &[name, stamp] : current.entries())
                 {
-                    if (dw.snapshot.count(name))
+                    if (dw.snapshot.contains(name))
                         continue;
                     push_filtered(entry, FileEventKind::Created, dw.dir_path / name, out);
-                    if (!stamp.is_dir)
+                    if (!stamp.m_is_directory)
                         (void)open_file_watch(impl, entry, dw, dw.dir_path / name);
                 }
-                for (const auto &[name, stamp] : dw.snapshot)
+                for (const auto &[name, stamp] : dw.snapshot.entries())
                 {
-                    if (current.count(name))
+                    if (current.contains(name))
                         continue;
                     push_filtered(entry, FileEventKind::Deleted, dw.dir_path / name, out);
-                    if (stamp.is_dir)
+                    if (stamp.m_is_directory)
                     {
                         if (entry.recursive)
                             close_directory_watch(entry, dw.dir_path / name);
@@ -72,8 +74,8 @@ namespace pjh::platform
 
                 if (entry.recursive)
                 {
-                    for (const auto &[name, stamp] : current)
-                        if (stamp.is_dir && !dw.snapshot.count(name) &&
+                    for (const auto &[name, stamp] : current.entries())
+                        if (stamp.m_is_directory && !dw.snapshot.contains(name) &&
                             !is_path_watched(entry, dw.dir_path / name))
                             (void)open_directory_watch(impl, entry, dw.dir_path / name);
                 }

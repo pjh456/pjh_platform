@@ -166,7 +166,7 @@ namespace pjh::platform
 
             Entry entry;
             std::error_code sec;
-            auto type = it->symlink_status(sec).type();
+            auto type = it->status(sec).type();
             if (sec)
                 continue;
             entry.m_is_directory = type == std::filesystem::file_type::directory;

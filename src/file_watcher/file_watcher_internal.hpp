@@ -1,6 +1,7 @@
 #ifndef INCLUDE_PJH_PLATFORM_FILE_WATCHER_INTERNAL_HPP
 #define INCLUDE_PJH_PLATFORM_FILE_WATCHER_INTERNAL_HPP
 
+#include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
 
@@ -31,16 +32,6 @@ namespace pjh::platform
 
     namespace detail
     {
-#if PJH_PLATFORM_MACOS
-        /// @brief Snapshot of one directory entry, used for macOS diffing.
-        struct FileStamp
-        {
-            std::intmax_t size = 0;
-            std::intmax_t mtime_ns = 0;
-            bool is_dir = false;
-        };
-#endif
-
 #if PJH_PLATFORM_WINDOWS
         /// @brief Per-watch state on Windows: a directory handle plus the
         ///        overlapped I/O buffer that `ReadDirectoryChangesW` fills.
@@ -75,7 +66,7 @@ namespace pjh::platform
                 std::filesystem::path dir_path;
                 /// @brief Canonical path used to detect symlink cycles.
                 std::filesystem::path real_path;
-                std::map<std::filesystem::path, FileStamp> snapshot;
+                pjh::platform::DirectorySnapshot snapshot;
                 /// @brief Maps an entry filename to the fd watching that file.
                 std::map<std::filesystem::path, int> file_fds;
             };
@@ -157,9 +148,6 @@ namespace pjh::platform
         [[nodiscard]] auto is_path_watched(
             const WatchEntry &entry, const std::filesystem::path &dir) -> bool;
         auto close_directory_watch(WatchEntry &entry, const std::filesystem::path &dir) -> void;
-        auto build_snapshot(
-            const std::filesystem::path &dir,
-            std::map<std::filesystem::path, FileStamp> &snapshot) -> void;
 #endif
 
         /// @brief Platform-specific registration of one watch.
