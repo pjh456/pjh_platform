@@ -59,6 +59,7 @@ namespace pjh::platform
                 case ERROR_ACCESS_DENIED:
                     return ErrorCode::PermissionDenied;
                 case ERROR_ALREADY_EXISTS:
+                case ERROR_FILE_EXISTS:
                     return ErrorCode::AlreadyExists;
                 case ERROR_INVALID_PARAMETER:
                     return ErrorCode::InvalidArgument;
