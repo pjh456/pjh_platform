@@ -6,11 +6,7 @@
 #include <cerrno>
 #include <filesystem>
 
-#if PJH_PLATFORM_MACOS
-#include <fcntl.h>
-#include <sys/event.h>
-#include <unistd.h>
-#elif PJH_PLATFORM_LINUX
+#if PJH_PLATFORM_LINUX
 #include <sys/inotify.h>
 #endif
 
@@ -95,118 +91,56 @@ namespace pjh::platform::detail
 #endif
 
 #if PJH_PLATFORM_MACOS
-    auto open_file_watch(
-        FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
-        const std::filesystem::path &file_path) -> int
+    auto fsevents_callback(
+        ConstFSEventStreamRef, void *info, size_t num_events, void *event_paths,
+        const FSEventStreamEventFlags event_flags[], const FSEventStreamEventId[]) -> void
     {
-        int fd = ::open(file_path.c_str(), O_RDONLY | O_EVTONLY);
-        if (fd == -1)
-            return -1;
-
-        struct kevent ev;
-        EV_SET(
-            &ev, static_cast<uintptr_t>(fd), EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
-            NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, nullptr);
-        if (::kevent(impl.fd, &ev, 1, nullptr, 0, nullptr) == -1)
-        {
-            ::close(fd);
-            return -1;
-        }
-
-        entry.fd_to_file[fd] = file_path;
-        dw.file_fds[file_path.filename()] = fd;
-        return fd;
-    }
-
-    auto close_file_watch(
-        WatchEntry &entry, WatchEntry::DirWatch &dw, const std::filesystem::path &name) -> void
-    {
-        auto it = dw.file_fds.find(name);
-        if (it == dw.file_fds.end())
+        auto *entry = static_cast<WatchEntry *>(info);
+        if (!entry)
             return;
-        int fd = it->second;
-        entry.fd_to_file.erase(fd);
-        dw.file_fds.erase(it);
-        if (fd != -1)
-            ::close(fd);
+        auto **paths = static_cast<char **>(event_paths);
+        entry->pending_events.reserve(entry->pending_events.size() + num_events);
+        for (size_t i = 0; i < num_events; ++i)
+        {
+            entry->pending_events.push_back(
+                WatchEntry::PendingEvent{std::filesystem::path(paths[i]), event_flags[i]});
+        }
     }
 
-    auto open_directory_watch(
-        FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir)
-        -> pjh::result::Result<void, ErrorCode>
+    auto create_fsevents_stream(FileWatcherImpl &impl, WatchEntry &entry) -> void
     {
-        std::error_code sec;
-        auto real = std::filesystem::weakly_canonical(dir, sec);
-        if (sec)
-            real = dir;
-        for (const auto &dw : entry.dirs)
-            if (dw.real_path == real)
-                return pjh::result::Result<void, ErrorCode>::Ok();
+        CFStringRef cf_path = CFStringCreateWithCString(
+            kCFAllocatorDefault, entry.watch_root.c_str(), kCFStringEncodingUTF8);
+        if (!cf_path)
+            return;
+        const void *cf_paths_values[] = {cf_path};
+        CFArrayRef cf_paths = CFArrayCreate(
+            kCFAllocatorDefault, cf_paths_values, 1, &kCFTypeArrayCallBacks);
+        CFRelease(cf_path);
+        if (!cf_paths)
+            return;
 
-        int fd = ::open(dir.c_str(), O_RDONLY | O_EVTONLY);
-        if (fd == -1)
-            return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
+        FSEventStreamContext ctx{};
+        ctx.info = &entry;
 
-        struct kevent ev;
-        EV_SET(
-            &ev, static_cast<uintptr_t>(fd), EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
-            NOTE_WRITE | NOTE_DELETE | NOTE_RENAME, 0, nullptr);
-        if (::kevent(impl.fd, &ev, 1, nullptr, 0, nullptr) == -1)
-        {
-            ::close(fd);
-            return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
-        }
+        FSEventStreamCreateFlags flags = 0;
+#ifdef kFSEventStreamCreateFlagNoDefer
+        flags |= kFSEventStreamCreateFlagNoDefer;
+#endif
+#ifdef kFSEventStreamCreateFlagFileEvents
+        flags |= kFSEventStreamCreateFlagFileEvents;
+#endif
 
-        WatchEntry::DirWatch dw;
-        dw.fd = fd;
-        dw.dir_path = dir;
-        dw.real_path = real;
-        auto captured = DirectorySnapshot::capture(dir);
-        if (captured.is_err())
-        {
-            ::close(fd);
-            return pjh::result::Failure<ErrorCode>{captured.unwrap_err()};
-        }
-        dw.snapshot = std::move(captured).unwrap();
+        FSEventStreamRef stream = FSEventStreamCreate(
+            kCFAllocatorDefault, &fsevents_callback, &ctx, cf_paths,
+            kFSEventStreamEventIdSinceNow, 0.0, flags);
+        CFRelease(cf_paths);
+        if (!stream)
+            return;
 
-        // A directory's NOTE_WRITE does not fire when a file's contents
-        // change, so every existing file gets its own vnode watch.
-        for (const auto &[name, stamp] : dw.snapshot.entries())
-            if (!stamp.m_is_directory)
-                (void)open_file_watch(impl, entry, dw, dir / name);
-
-        entry.fd_to_dir[fd] = entry.dirs.insert(entry.dirs.end(), std::move(dw));
-        return pjh::result::Result<void, ErrorCode>::Ok();
-    }
-
-    auto is_path_watched(const WatchEntry &entry, const std::filesystem::path &dir) -> bool
-    {
-        for (const auto &dw : entry.dirs)
-            if (dw.dir_path == dir)
-                return true;
-        return false;
-    }
-
-    auto close_directory_watch(WatchEntry &entry, const std::filesystem::path &dir) -> void
-    {
-        for (auto it = entry.dirs.begin(); it != entry.dirs.end(); ++it)
-        {
-            if (it->dir_path == dir)
-            {
-                for (const auto &[name, ffd] : it->file_fds)
-                {
-                    entry.fd_to_file.erase(ffd);
-                    if (ffd != -1)
-                        ::close(ffd);
-                }
-                it->file_fds.clear();
-                if (it->fd != -1)
-                    ::close(it->fd);
-                entry.fd_to_dir.erase(it->fd);
-                entry.dirs.erase(it);
-                return;
-            }
-        }
+        FSEventStreamScheduleWithRunLoop(stream, impl.run_loop, kCFRunLoopDefaultMode);
+        FSEventStreamStart(stream);
+        entry.stream = stream;
     }
 #endif
 

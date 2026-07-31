@@ -8,9 +8,7 @@
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
 #elif PJH_PLATFORM_MACOS
-#include <sys/event.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <CoreServices/CoreServices.h>
 #else
 #include <sys/inotify.h>
 #include <sys/stat.h>
@@ -19,7 +17,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -51,24 +48,16 @@ namespace pjh::platform
             bool io_pending = false;
         };
 #elif PJH_PLATFORM_MACOS
-        /// @brief Per-watch state on macOS: every watched directory (root or
-        ///        subdirectory) has its own kqueue registration, snapshot, and
-        ///        a per-file kqueue registration for content changes.
+        /// @brief Per-watch state on macOS: an `FSEvents` stream watching the
+        ///        watch root, plus one snapshot per directory under it used to
+        ///        infer individual changes.
         struct WatchEntry
         {
-            /// @brief A single watched directory. A directory's `NOTE_WRITE`
-            ///        only fires when its *entries* change (create/delete/
-            ///        rename), not when a file's contents change, so each file
-            ///        also gets its own vnode watch via `file_fds`.
-            struct DirWatch
+            /// @brief A raw FSEvents delivery awaiting processing by `poll()`.
+            struct PendingEvent
             {
-                int fd = -1;
-                std::filesystem::path dir_path;
-                /// @brief Canonical path used to detect symlink cycles.
-                std::filesystem::path real_path;
-                pjh::platform::DirectorySnapshot snapshot;
-                /// @brief Maps an entry filename to the fd watching that file.
-                std::map<std::filesystem::path, int> file_fds;
+                std::filesystem::path path;
+                FSEventStreamEventFlags flags = 0;
             };
 
             /// @brief Normalized absolute path of the watched file or directory.
@@ -79,15 +68,15 @@ namespace pjh::platform
             ///        watched file, or the directory itself).
             std::filesystem::path watch_root;
 
-            /// @brief One kqueue watch per watched directory. `std::list` keeps
-            ///        node addresses (and therefore iterators stored in
-            ///        `fd_to_dir`) stable while subdirectory watches are added
-            ///        or removed during polling.
-            std::list<DirWatch> dirs;
-            /// @brief Maps a directory fd to its `DirWatch`.
-            std::unordered_map<int, std::list<DirWatch>::iterator> fd_to_dir;
-            /// @brief Maps a per-file vnode fd to the file's absolute path.
-            std::unordered_map<int, std::filesystem::path> fd_to_file;
+            /// @brief FSEvents stream watching `watch_root`.
+            FSEventStreamRef stream = nullptr;
+            /// @brief Baseline snapshot per directory under `watch_root`.
+            ///        A missing entry means the directory has been seen for the
+            ///        first time since the baseline was taken.
+            std::map<std::filesystem::path, DirectorySnapshot> snapshots;
+            /// @brief Events delivered by the FSEvents callback; consumed by
+            ///        the next `poll()`.
+            std::vector<PendingEvent> pending_events;
         };
 #else
         /// @brief Per-watch state on Linux: the root `inotify` watch descriptor
@@ -130,24 +119,26 @@ namespace pjh::platform
 #endif
 
 #if PJH_PLATFORM_MACOS
-        /// @brief Registers a kqueue vnode watch on @p dir and records its
-        ///        initial snapshot, including per-file watches. Failure leaves
-        ///        no resources behind.
-        [[nodiscard]] auto open_directory_watch(
-            FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir)
-            -> pjh::result::Result<void, ErrorCode>;
-        /// @brief Registers a kqueue vnode watch on the file @p file_path,
-        ///        which must live inside the directory watched by @p dw.
-        ///        Returns the fd, or -1 on failure.
-        auto open_file_watch(
-            FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
-            const std::filesystem::path &file_path) -> int;
-        /// @brief Closes the watch on entry @p name inside @p dw.
-        auto close_file_watch(WatchEntry &entry, WatchEntry::DirWatch &dw,
-            const std::filesystem::path &name) -> void;
-        [[nodiscard]] auto is_path_watched(
-            const WatchEntry &entry, const std::filesystem::path &dir) -> bool;
-        auto close_directory_watch(WatchEntry &entry, const std::filesystem::path &dir) -> void;
+#ifdef kFSEventStreamEventFlagItemIsDir
+        /// @brief Bit indicating a reported FSEvents path is a directory. 0 on
+        ///        SDKs that predate `kFSEventStreamCreateFlagFileEvents`.
+        inline constexpr auto kFseventsItemIsDir = kFSEventStreamEventFlagItemIsDir;
+#else
+        inline constexpr auto kFseventsItemIsDir = FSEventStreamEventFlags{0};
+#endif
+
+        /// @brief FSEvents callback entry point; appends raw events to the
+        ///        entry's pending list.
+        auto fsevents_callback(
+            ConstFSEventStreamRef stream, void *info, size_t num_events,
+            void *event_paths, const FSEventStreamEventFlags event_flags[],
+            const FSEventStreamEventId event_ids[]) -> void;
+        /// @brief Creates, schedules and starts the FSEvents stream watching
+        ///        `entry.watch_root`. Failure leaves `entry.stream` null.
+        auto create_fsevents_stream(FileWatcherImpl &impl, WatchEntry &entry) -> void;
+        /// @brief Turns the entry's pending FSEvents deliveries into
+        ///        `FileEvent`s using directory snapshot diffs.
+        auto process_fsevents(WatchEntry &entry, std::vector<FileEvent> &out) -> void;
 #endif
 
         /// @brief Platform-specific registration of one watch.
@@ -170,8 +161,12 @@ namespace pjh::platform
     {
 #if PJH_PLATFORM_WINDOWS
         HANDLE port = nullptr;
-#else
+#elif PJH_PLATFORM_LINUX
         int fd = -1;
+#elif PJH_PLATFORM_MACOS
+        /// @brief Run loop the FSEvents streams are scheduled on. Captured at
+        ///        construction, so all calls must stay on the same thread.
+        CFRunLoopRef run_loop = nullptr;
 #endif
         bool closed = false;
         std::vector<std::unique_ptr<detail::WatchEntry>> entries;

@@ -67,12 +67,11 @@ namespace pjh::platform
             return pjh::result::Result<void, ErrorCode>::Ok();
 
 #elif PJH_PLATFORM_MACOS
-            if (impl.fd == -1)
-                return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
+            auto root_cap = DirectorySnapshot::capture(entry.watch_root);
+            if (root_cap.is_err())
+                return pjh::result::Failure<ErrorCode>{root_cap.unwrap_err()};
+            entry.snapshots[entry.watch_root] = std::move(root_cap).unwrap();
 
-            auto r = open_directory_watch(impl, entry, entry.watch_root);
-            if (r.is_err())
-                return r;
             if (entry.recursive)
             {
                 std::error_code ec;
@@ -88,13 +87,15 @@ namespace pjh::platform
                     std::error_code sec;
                     if (!std::filesystem::is_directory(it->path(), sec))
                         continue;
-                    if (is_path_watched(entry, it->path()))
-                        continue;
-                    auto rr = open_directory_watch(impl, entry, it->path());
-                    if (rr.is_err())
-                        continue;
+                    auto cap = DirectorySnapshot::capture(it->path());
+                    if (cap.is_ok())
+                        entry.snapshots[it->path()] = std::move(cap).unwrap();
                 }
             }
+
+            create_fsevents_stream(impl, entry);
+            if (!entry.stream)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
             return pjh::result::Result<void, ErrorCode>::Ok();
 
 #else

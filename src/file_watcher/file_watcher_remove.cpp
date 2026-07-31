@@ -5,9 +5,7 @@
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
-#elif PJH_PLATFORM_MACOS
-#include <unistd.h>
-#else
+#elif PJH_PLATFORM_LINUX
 #include <sys/inotify.h>
 #endif
 
@@ -46,17 +44,15 @@ namespace pjh::platform
                 entry.handle = INVALID_HANDLE_VALUE;
             }
 #elif PJH_PLATFORM_MACOS
-            for (auto &dw : entry.dirs)
+            if (entry.stream)
             {
-                for (const auto &[name, ffd] : dw.file_fds)
-                    if (ffd != -1)
-                        ::close(ffd);
-                if (dw.fd != -1)
-                    ::close(dw.fd);
+                FSEventStreamStop(entry.stream);
+                FSEventStreamInvalidate(entry.stream);
+                FSEventStreamRelease(entry.stream);
+                entry.stream = nullptr;
             }
-            entry.dirs.clear();
-            entry.fd_to_dir.clear();
-            entry.fd_to_file.clear();
+            entry.snapshots.clear();
+            entry.pending_events.clear();
 #else
             for (auto &[wd, unused] : entry.wd_to_path) ::inotify_rm_watch(impl.fd, wd);
             entry.wd_to_path.clear();

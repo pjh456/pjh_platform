@@ -62,11 +62,10 @@ namespace pjh::platform
     /// @details Watches files and directories and reports changes through
     ///          `poll()`. Under the hood:
     ///          - Linux uses `inotify`.
-    ///          - macOS uses `kqueue`: a vnode watch per watched directory
-    ///            plus one per file, so content modifications are detected
-    ///            (a directory's `NOTE_WRITE` only fires for entry changes).
-    ///            No run loop is involved. Note that this consumes one file
-    ///            descriptor per file in a watched directory.
+    ///          - macOS uses `FSEvents` with file-level events, scheduled on the
+    ///            current thread's run loop; individual changes are inferred by
+    ///            diffing directory snapshots, so no file descriptors are held
+    ///            for watched files.
     ///          - Windows uses `ReadDirectoryChangesW` over an I/O completion
     ///            port.
     ///

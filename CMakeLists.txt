@@ -24,6 +24,11 @@ target_include_directories(pjh_platform
 target_compile_features(pjh_platform PUBLIC cxx_std_20)
 target_link_libraries(pjh_platform PUBLIC pjh_result)
 
+if(APPLE)
+    find_library(PJH_PLATFORM_CORESERVICES_FRAMEWORK CoreServices)
+    target_link_libraries(pjh_platform PUBLIC ${PJH_PLATFORM_CORESERVICES_FRAMEWORK})
+endif()
+
 option(PJH_PLATFORM_BUILD_TESTS "Build tests" ${PROJECT_IS_TOP_LEVEL})
 option(PJH_PLATFORM_BUILD_EXAMPLES "Build examples" OFF)
 

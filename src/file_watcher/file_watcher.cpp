@@ -5,10 +5,7 @@
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
-#elif PJH_PLATFORM_MACOS
-#include <sys/event.h>
-#include <unistd.h>
-#else
+#elif PJH_PLATFORM_LINUX
 #include <sys/inotify.h>
 #include <unistd.h>
 #endif
@@ -23,7 +20,7 @@ namespace pjh::platform
 #if PJH_PLATFORM_WINDOWS
         impl_->port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
 #elif PJH_PLATFORM_MACOS
-        impl_->fd = ::kqueue();
+        impl_->run_loop = CFRunLoopGetCurrent();
 #else
         impl_->fd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
 #endif
@@ -54,7 +51,7 @@ namespace pjh::platform
             CloseHandle(impl_->port);
             impl_->port = nullptr;
         }
-#else
+#elif PJH_PLATFORM_LINUX
         if (impl_->fd != -1)
         {
             ::close(impl_->fd);

@@ -1,3 +1,4 @@
+#include <pjh_platform/directory_diff.hpp>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
 
@@ -14,10 +15,7 @@
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
-#elif PJH_PLATFORM_MACOS
-#include <sys/event.h>
-#include <unistd.h>
-#else
+#elif PJH_PLATFORM_LINUX
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -30,57 +28,78 @@ namespace pjh::platform
         namespace
         {
 #if PJH_PLATFORM_MACOS
-            auto push_filtered(
-                WatchEntry &entry, FileEventKind kind, const std::filesystem::path &path,
-                std::vector<FileEvent> &out) -> void
+            auto to_kind(DirectoryDiff::ChangeKind kind) -> FileEventKind
             {
-                if (!entry.is_directory && path != entry.path)
-                    return;
+                switch (kind)
+                {
+                case DirectoryDiff::ChangeKind::Created:
+                    return FileEventKind::Created;
+                case DirectoryDiff::ChangeKind::Deleted:
+                    return FileEventKind::Deleted;
+                case DirectoryDiff::ChangeKind::Modified:
+                    return FileEventKind::Modified;
+                }
+                return FileEventKind::Modified;
+            }
+
+            auto emit_if_new(
+                std::vector<FileEvent> &out, FileEventKind kind,
+                const std::filesystem::path &path) -> void
+            {
+                for (const auto &e : out)
+                    if (e.kind == kind && e.path == path)
+                        return;
                 out.push_back(FileEvent{kind, path, std::nullopt});
             }
 
-            auto diff_directory(
-                FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
-                std::vector<FileEvent> &out) -> void
+            auto diff_and_emit(
+                WatchEntry &entry, const std::filesystem::path &dir,
+                const DirectorySnapshot &before, DirectorySnapshot &&current,
+                std::vector<FileEvent> &out) -> DirectorySnapshot
             {
-                auto captured = DirectorySnapshot::capture(dw.dir_path);
-                if (captured.is_err())
-                    return;
-                DirectorySnapshot current = std::move(captured).unwrap();
+                auto dr = DirectoryDiff::compare(before, current);
+                if (dr.is_ok())
+                {
+                    DirectoryDiff diff = std::move(dr).unwrap();
+                    auto renames = diff.detect_renames(before, current);
 
-                for (const auto &[name, stamp] : current.entries())
-                {
-                    if (dw.snapshot.contains(name))
-                        continue;
-                    push_filtered(entry, FileEventKind::Created, dw.dir_path / name, out);
-                    if (!stamp.m_is_directory)
-                        (void)open_file_watch(impl, entry, dw, dw.dir_path / name);
-                }
-                for (const auto &[name, stamp] : dw.snapshot.entries())
-                {
-                    if (current.contains(name))
-                        continue;
-                    push_filtered(entry, FileEventKind::Deleted, dw.dir_path / name, out);
-                    if (stamp.m_is_directory)
+                    std::vector<std::filesystem::path> suppressed;
+                    suppressed.reserve(renames.size() * 2);
+                    for (const auto &r : renames)
                     {
-                        if (entry.recursive)
-                            close_directory_watch(entry, dw.dir_path / name);
+                        suppressed.push_back(r.m_old_filename);
+                        suppressed.push_back(r.m_new_filename);
                     }
-                    else
+
+                    for (const auto &ch : diff.changes())
                     {
-                        close_file_watch(entry, dw, name);
+                        if (std::find(
+                                suppressed.begin(), suppressed.end(), ch.m_filename) !=
+                            suppressed.end())
+                            continue;
+                        if (!entry.is_directory && ch.m_full_path != entry.path)
+                            continue;
+                        emit_if_new(out, to_kind(ch.m_kind), ch.m_full_path);
+                    }
+                    for (const auto &r : renames)
+                    {
+                        auto old_full = dir / r.m_old_filename;
+                        auto new_full = dir / r.m_new_filename;
+                        if (entry.is_directory)
+                        {
+                            emit_if_new(out, FileEventKind::MovedFrom, old_full);
+                            emit_if_new(out, FileEventKind::MovedTo, new_full);
+                        }
+                        else
+                        {
+                            if (old_full == entry.path)
+                                emit_if_new(out, FileEventKind::MovedFrom, entry.path);
+                            if (new_full == entry.path)
+                                emit_if_new(out, FileEventKind::MovedTo, entry.path);
+                        }
                     }
                 }
-
-                if (entry.recursive)
-                {
-                    for (const auto &[name, stamp] : current.entries())
-                        if (stamp.m_is_directory && !dw.snapshot.contains(name) &&
-                            !is_path_watched(entry, dw.dir_path / name))
-                            (void)open_directory_watch(impl, entry, dw.dir_path / name);
-                }
-
-                dw.snapshot = std::move(current);
+                return current;
             }
 #elif PJH_PLATFORM_LINUX
             auto mask_to_kind(std::uint32_t mask) -> std::optional<FileEventKind>
@@ -154,6 +173,79 @@ namespace pjh::platform
 #endif
         }  // namespace
 
+#if PJH_PLATFORM_MACOS
+        auto process_fsevents(WatchEntry &entry, std::vector<FileEvent> &out) -> void
+        {
+            for (const auto &pe : entry.pending_events)
+            {
+                const auto &p = pe.path;
+                if (p != entry.watch_root && !path_is_under(p, entry.watch_root))
+                    continue;
+                if (!entry.is_directory && p != entry.path)
+                    continue;
+
+                std::filesystem::path d;
+                if (entry.is_directory && entry.recursive)
+                {
+                    std::error_code ec;
+                    bool is_dir = (pe.flags & kFseventsItemIsDir) != 0 ||
+                                  std::filesystem::is_directory(p, ec);
+                    d = is_dir ? p : p.parent_path();
+                }
+                else
+                {
+                    d = entry.watch_root;
+                }
+
+                auto captured = DirectorySnapshot::capture(d);
+                if (captured.is_err())
+                {
+                    // The directory itself is gone. Report its removal and drop
+                    // every snapshot beneath it.
+                    auto it = entry.snapshots.find(d);
+                    if (it != entry.snapshots.end())
+                    {
+                        if (entry.is_directory)
+                            emit_if_new(out, FileEventKind::Deleted, d);
+                        for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
+                        {
+                            if (sit->first == d || path_is_under(sit->first, d))
+                                sit = entry.snapshots.erase(sit);
+                            else
+                                ++sit;
+                        }
+                    }
+                    continue;
+                }
+                DirectorySnapshot current = std::move(captured).unwrap();
+
+                auto it = entry.snapshots.find(d);
+                if (it == entry.snapshots.end())
+                {
+                    // First event for a directory created after the baseline
+                    // was taken. Diff its parent so the creation is reported,
+                    // then establish this directory's own baseline.
+                    if (d != entry.watch_root)
+                    {
+                        auto pit = entry.snapshots.find(d.parent_path());
+                        if (pit != entry.snapshots.end())
+                        {
+                            auto pc = DirectorySnapshot::capture(d.parent_path());
+                            if (pc.is_ok())
+                                pit->second = diff_and_emit(
+                                    entry, d.parent_path(), pit->second,
+                                    std::move(pc).unwrap(), out);
+                        }
+                    }
+                    entry.snapshots[d] = std::move(current);
+                    continue;
+                }
+
+                it->second = diff_and_emit(entry, d, it->second, std::move(current), out);
+            }
+        }
+#endif
+
         auto platform_poll(FileWatcherImpl &impl, std::chrono::milliseconds timeout)
             -> pjh::result::Result<std::vector<FileEvent>, ErrorCode>
         {
@@ -217,51 +309,22 @@ namespace pjh::platform
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
 #elif PJH_PLATFORM_MACOS
-            if (impl.fd == -1)
+            if (impl.run_loop == nullptr)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
 
             long long ms = timeout.count();
             if (ms < 0)
                 ms = 0;
-            struct timespec ts;
-            ts.tv_sec = static_cast<time_t>(ms / 1000);
-            ts.tv_nsec = static_cast<long>((ms % 1000) * 1000000L);
-            struct kevent events[16];
-            int n = ::kevent(impl.fd, nullptr, 0, events, 16, &ts);
-            if (n == -1)
-            {
-                if (errno == EINTR)
-                    return pjh::result::Failure<ErrorCode>{ErrorCode::Interrupted};
-                return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
-            }
-            for (int i = 0; i < n; ++i)
-            {
-                int fd = static_cast<int>(events[i].ident);
-                for (auto &e : impl.entries)
-                {
-                    auto dit = e->fd_to_dir.find(fd);
-                    if (dit != e->fd_to_dir.end())
-                    {
-                        auto &dw = *dit->second;
-                        if (events[i].fflags & NOTE_DELETE)
-                            push_filtered(*e, FileEventKind::Deleted, dw.dir_path, out);
-                        if (events[i].fflags & NOTE_RENAME)
-                            push_filtered(*e, FileEventKind::MovedFrom, dw.dir_path, out);
-                        if (events[i].fflags & NOTE_WRITE)
-                            diff_directory(impl, *e, dw, out);
-                        break;
-                    }
-                    auto pit = e->fd_to_file.find(fd);
-                    if (pit != e->fd_to_file.end())
-                    {
-                        // Content changes of a file inside a watched directory
-                        // only surface through its own vnode watch.
-                        if (events[i].fflags & (NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB))
-                            push_filtered(*e, FileEventKind::Modified, pit->second, out);
-                        break;
-                    }
-                }
-            }
+            for (auto &e : impl.entries)
+                e->pending_events.clear();
+            // Pump the run loop the FSEvents streams are scheduled on. Events
+            // delivered while pumping land in each entry's pending list; anything
+            // not delivered by the deadline stays buffered by FSEvents.
+            CFRunLoopRunInMode(
+                kCFRunLoopDefaultMode, static_cast<double>(ms) / 1000.0, true);
+            for (auto &e : impl.entries)
+                if (!e->pending_events.empty())
+                    process_fsevents(*e, out);
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
 #else  // PJH_PLATFORM_LINUX
