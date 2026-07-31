@@ -8,7 +8,9 @@
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,7 +29,6 @@ namespace pjh::platform
     {
         namespace
         {
-#if PJH_PLATFORM_MACOS
             auto to_kind(DirectoryDiff::ChangeKind kind) -> FileEventKind
             {
                 switch (kind)
@@ -118,7 +119,66 @@ namespace pjh::platform
                 }
                 return current;
             }
-#elif PJH_PLATFORM_LINUX
+
+#if PJH_PLATFORM_LINUX || PJH_PLATFORM_WINDOWS
+            auto prune_snapshots(WatchEntry &entry, const std::filesystem::path &dir) -> void
+            {
+                for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
+                {
+                    if (sit->first == dir || path_is_under(sit->first, dir))
+                        sit = entry.snapshots.erase(sit);
+                    else
+                        ++sit;
+                }
+            }
+
+            auto tree_dirs(WatchEntry &entry) -> std::vector<std::filesystem::path>
+            {
+                std::vector<std::filesystem::path> dirs;
+                dirs.push_back(entry.watch_root);
+                if (!entry.recursive)
+                    return dirs;
+                std::error_code ec;
+                for (auto it = std::filesystem::recursive_directory_iterator(
+                         entry.watch_root, ec);
+                     it != std::filesystem::recursive_directory_iterator(); ++it)
+                {
+                    if (ec)
+                    {
+                        ec.clear();
+                        continue;
+                    }
+                    std::error_code sec;
+                    if (!std::filesystem::is_directory(it->path(), sec))
+                        continue;
+                    dirs.push_back(it->path());
+                }
+                return dirs;
+            }
+
+            auto resync_directory(
+                WatchEntry &entry, const std::filesystem::path &dir,
+                std::vector<FileEvent> &out) -> void
+            {
+                auto captured = DirectorySnapshot::capture(dir);
+                if (captured.is_err())
+                {
+                    auto sit = entry.snapshots.find(dir);
+                    if (sit != entry.snapshots.end() && entry.is_directory)
+                        emit_if_new(out, FileEventKind::Deleted, dir);
+                    prune_snapshots(entry, dir);
+                    return;
+                }
+                auto current = std::move(captured).unwrap();
+                auto sit = entry.snapshots.find(dir);
+                if (sit == entry.snapshots.end())
+                    entry.snapshots[dir] = std::move(current);
+                else
+                    sit->second = diff_and_emit(entry, dir, sit->second, std::move(current), out);
+            }
+#endif  // PJH_PLATFORM_LINUX || PJH_PLATFORM_WINDOWS
+
+#if PJH_PLATFORM_LINUX
             auto mask_to_kind(std::uint32_t mask) -> std::optional<FileEventKind>
             {
                 if (mask & IN_MOVED_FROM)
@@ -154,7 +214,57 @@ namespace pjh::platform
                     }
                 }
             }
-#else  // PJH_PLATFORM_WINDOWS
+
+            auto resync_linux(
+                FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out) -> void
+            {
+                auto current_dirs = tree_dirs(entry);
+
+                // Reconcile the inotify watch set with the live directory tree:
+                // drop watches for directories that are gone, add watches for
+                // directories that appeared while events were being dropped.
+                auto watched = [&entry](const std::filesystem::path &dir) -> bool {
+                    for (const auto &[wd, p] : entry.wd_to_path)
+                        if (p == dir)
+                            return true;
+                    return false;
+                };
+                for (auto it = entry.wd_to_path.begin(); it != entry.wd_to_path.end();)
+                {
+                    if (it->first != entry.root_wd &&
+                        std::find(current_dirs.begin(), current_dirs.end(), it->second) ==
+                            current_dirs.end())
+                    {
+                        ::inotify_rm_watch(impl.fd, it->first);
+                        it = entry.wd_to_path.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+                for (const auto &dir : current_dirs)
+                {
+                    if (dir == entry.watch_root || watched(dir))
+                        continue;
+                    int wd = ::inotify_add_watch(impl.fd, dir.c_str(), watch_mask());
+                    if (wd != -1)
+                        entry.wd_to_path[wd] = dir;
+                }
+
+                for (const auto &dir : current_dirs)
+                    resync_directory(entry, dir, out);
+
+                for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
+                {
+                    if (std::find(current_dirs.begin(), current_dirs.end(), sit->first) ==
+                        current_dirs.end())
+                        sit = entry.snapshots.erase(sit);
+                    else
+                        ++sit;
+                }
+            }
+#elif PJH_PLATFORM_WINDOWS
             auto action_to_kind(DWORD action) -> std::optional<FileEventKind>
             {
                 switch (action)
@@ -186,6 +296,21 @@ namespace pjh::platform
                         entry.recursive ? TRUE : FALSE, filter, nullptr, &entry.overlapped,
                         nullptr))
                     entry.io_pending = true;
+            }
+
+            auto resync_windows(WatchEntry &entry, std::vector<FileEvent> &out) -> void
+            {
+                auto current_dirs = tree_dirs(entry);
+                for (const auto &dir : current_dirs)
+                    resync_directory(entry, dir, out);
+                for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
+                {
+                    if (std::find(current_dirs.begin(), current_dirs.end(), sit->first) ==
+                        current_dirs.end())
+                        sit = entry.snapshots.erase(sit);
+                    else
+                        ++sit;
+                }
             }
 #endif
         }  // namespace
@@ -368,25 +493,83 @@ namespace pjh::platform
                 return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
                     std::move(out));
 
-            std::size_t off = 0;
-            while (off + sizeof(FILE_NOTIFY_INFORMATION) <= static_cast<std::size_t>(bytes))
+            // ReadDirectoryChangesW can complete with a failure that still
+            // produces a completion packet (a buffer overflow); resolve the
+            // real result of the overlapped operation.
+            DWORD notify_bytes = 0;
+            if (GetOverlappedResult(entry->handle, &entry->overlapped, &notify_bytes, FALSE))
             {
-                auto *rec = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(
-                    entry->buffer.data() + off);
-                std::size_t name_chars = rec->FileNameLength / sizeof(wchar_t);
-                std::filesystem::path rel(std::wstring(rec->FileName, name_chars));
-                auto full = entry->watch_root / rel;
-                if (!entry->is_directory && entry->path.filename() != rel)
+                std::set<std::filesystem::path> affected;
+                std::size_t off = 0;
+                while (off + sizeof(FILE_NOTIFY_INFORMATION) <=
+                       static_cast<std::size_t>(notify_bytes))
                 {
-                    // Unrelated event; filtered out for a file watch.
+                    auto *rec = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(
+                        entry->buffer.data() + off);
+                    std::size_t name_chars = rec->FileNameLength / sizeof(wchar_t);
+                    std::filesystem::path rel(std::wstring(rec->FileName, name_chars));
+                    auto full = entry->watch_root / rel;
+                    if (!entry->is_directory && entry->path.filename() != rel)
+                    {
+                        // Unrelated event; filtered out for a file watch.
+                    }
+                    else if (auto kind = action_to_kind(rec->Action))
+                    {
+                        out.push_back(FileEvent{*kind, full, std::nullopt});
+                    }
+                    affected.insert(full.parent_path());
+                    if (rec->Action == FILE_ACTION_ADDED)
+                    {
+                        // A new directory gets its own baseline so changes made
+                        // inside it are recoverable after a later overflow.
+                        std::error_code ec;
+                        if (std::filesystem::is_directory(full, ec) && !ec)
+                        {
+                            auto cap = DirectorySnapshot::capture(full);
+                            if (cap.is_ok())
+                                entry->snapshots[full] = std::move(cap).unwrap();
+                        }
+                    }
+                    else if (rec->Action == FILE_ACTION_REMOVED)
+                    {
+                        prune_snapshots(*entry, full);
+                    }
+                    if (rec->NextEntryOffset == 0)
+                        break;
+                    off += rec->NextEntryOffset;
                 }
-                else if (auto kind = action_to_kind(rec->Action))
+
+                // Refresh the baselines of directories touched by this batch so
+                // a later buffer overflow only reports changes made after it.
+                for (const auto &dir : affected)
                 {
-                    out.push_back(FileEvent{*kind, full, std::nullopt});
+                    auto sit = entry->snapshots.find(dir);
+                    if (sit == entry->snapshots.end())
+                        continue;
+                    auto captured = DirectorySnapshot::capture(dir);
+                    if (captured.is_err())
+                    {
+                        prune_snapshots(*entry, dir);
+                        continue;
+                    }
+                    sit->second = std::move(captured).unwrap();
                 }
-                if (rec->NextEntryOffset == 0)
-                    break;
-                off += rec->NextEntryOffset;
+            }
+            else
+            {
+                DWORD oserr = GetLastError();
+                entry->io_pending = false;
+                if (oserr == ERROR_NOTIFY_ENUM_DIR)
+                {
+                    // The change buffer overflowed and events were lost;
+                    // recover by diffing every watched directory against its
+                    // stored baseline snapshot.
+                    resync_windows(*entry, out);
+                }
+                else
+                {
+                    return pjh::result::Failure<ErrorCode>{map_windows_error(oserr)};
+                }
             }
 
             entry->io_pending = false;
@@ -431,6 +614,7 @@ namespace pjh::platform
                 return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
                     std::move(out));
 
+            std::map<WatchEntry *, std::set<std::filesystem::path>> affected;
             alignas(struct inotify_event) unsigned char buf[64 * 1024];
             for (;;)
             {
@@ -452,6 +636,16 @@ namespace pjh::platform
                     if (off > static_cast<std::size_t>(n))
                         break;
 
+                    // The inotify queue overflowed and events were dropped;
+                    // recover by diffing every watched directory against its
+                    // stored baseline snapshot.
+                    if (ev->mask & IN_Q_OVERFLOW)
+                    {
+                        for (auto &e : impl.entries)
+                            resync_linux(impl, *e, out);
+                        continue;
+                    }
+
                     for (auto &e : impl.entries)
                     {
                         auto wit = e->wd_to_path.find(ev->wd);
@@ -459,12 +653,15 @@ namespace pjh::platform
                             continue;
                         if (ev->mask & IN_IGNORED)
                         {
+                            auto gone = wit->second;
                             e->wd_to_path.erase(wit);
+                            prune_snapshots(*e, gone);
                             continue;
                         }
                         auto full = (ev->len > 0) ? wit->second / ev->name : wit->second;
                         if (!e->is_directory && full != e->path)
                             continue;
+                        affected[e.get()].insert(wit->second);
                         if (auto kind = mask_to_kind(ev->mask))
                         {
                             FileEvent fe;
@@ -483,16 +680,39 @@ namespace pjh::platform
                                     impl.fd, full.c_str(), watch_mask());
                                 if (wd != -1)
                                     e->wd_to_path[wd] = full;
+                                auto cap = DirectorySnapshot::capture(full);
+                                if (cap.is_ok())
+                                    e->snapshots[full] = std::move(cap).unwrap();
                             }
                             else if (ev->mask & IN_DELETE)
                             {
                                 remove_subdir_watches(impl.fd, *e, full);
+                                prune_snapshots(*e, full);
                             }
                         }
                     }
                 }
                 if (n < static_cast<ssize_t>(sizeof(buf)))
                     break;
+            }
+
+            // Refresh the baselines of directories touched by this batch so a
+            // later queue overflow only reports changes made after this batch.
+            for (auto &[e, dirs] : affected)
+            {
+                for (const auto &dir : dirs)
+                {
+                    auto sit = e->snapshots.find(dir);
+                    if (sit == e->snapshots.end())
+                        continue;
+                    auto captured = DirectorySnapshot::capture(dir);
+                    if (captured.is_err())
+                    {
+                        prune_snapshots(*e, dir);
+                        continue;
+                    }
+                    sit->second = std::move(captured).unwrap();
+                }
             }
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 #endif

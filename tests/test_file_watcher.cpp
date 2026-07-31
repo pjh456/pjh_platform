@@ -6,8 +6,15 @@
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/fs.hpp>
+#include <pjh_platform/platform.hpp>
 #include <utility>
 #include <vector>
+
+#if PJH_PLATFORM_LINUX
+#include <fcntl.h>
+#include <fstream>
+#include <unistd.h>
+#endif
 
 using pjh::platform::ErrorCode;
 using pjh::platform::FileEvent;
@@ -260,3 +267,39 @@ TEST_CASE("FileWatcher move transfers the watch")
         moved, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
     CHECK(has_event(events, FileEventKind::Created, file));
 }
+
+#if PJH_PLATFORM_LINUX
+TEST_CASE("FileWatcher recovers events lost to an inotify queue overflow")
+{
+    auto p = make_test_dir();
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    auto file = p / "burst.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+    collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+
+    // Flood the inotify queue with far more IN_MODIFY events than it can hold.
+    // The kernel discards the surplus and queues a single IN_Q_OVERFLOW marker;
+    // the modifications must then be recovered from the snapshot diff.
+    std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
+    int limit = 0;
+    if (!(limit_file >> limit) || limit <= 0)
+        return;  // cannot determine the queue size; skip
+
+    int fd = ::open(file.c_str(), O_WRONLY | O_APPEND);
+    REQUIRE(fd >= 0);
+    char chunk[64] = {};
+    for (int i = 0; i < limit + 200; ++i)
+    {
+        ssize_t rc = ::write(fd, chunk, sizeof(chunk));
+        REQUIRE(rc == static_cast<ssize_t>(sizeof(chunk)));
+    }
+    ::close(fd);
+
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
+    CHECK(has_event(events, FileEventKind::Modified, file));
+}
+#endif

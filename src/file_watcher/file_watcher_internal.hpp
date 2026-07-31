@@ -46,6 +46,9 @@ namespace pjh::platform
             OVERLAPPED overlapped{};
             std::vector<unsigned char> buffer;
             bool io_pending = false;
+            /// @brief Baseline snapshot per directory under `watch_root`, used
+            ///        to recover events lost when the change buffer overflows.
+            std::map<std::filesystem::path, DirectorySnapshot> snapshots;
         };
 #elif PJH_PLATFORM_MACOS
         /// @brief Per-watch state on macOS: an `FSEvents` stream watching the
@@ -100,6 +103,9 @@ namespace pjh::platform
             /// @brief Maps an `inotify` watch descriptor to the directory it
             ///        watches (root and, when recursive, each subdirectory).
             std::unordered_map<int, std::filesystem::path> wd_to_path;
+            /// @brief Baseline snapshot per directory under `watch_root`, used
+            ///        to recover events lost when the inotify queue overflows.
+            std::map<std::filesystem::path, DirectorySnapshot> snapshots;
         };
 #endif
 
