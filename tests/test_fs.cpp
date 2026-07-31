@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include <pjh_platform/fs.hpp>
+#include <pjh_platform/os.hpp>
 
 using pjh::platform::Fs;
 
@@ -157,4 +158,97 @@ TEST_CASE("Fs::list_directory returns NotFound for non-existent path")
     auto entries = Fs::list_directory("/nonexistent_path_12345");
     CHECK(entries.is_err());
     CHECK_EQ(entries.unwrap_err(), pjh::platform::ErrorCode::NotFound);
+}
+
+TEST_CASE("Fs::normalize collapses dot and dot-dot elements")
+{
+    using pjh::platform::ErrorCode;
+    auto sep = std::filesystem::path::preferred_separator;
+
+    CHECK_EQ(Fs::normalize(std::filesystem::path("a/./b/../c")).string(),
+             std::filesystem::path("a/c").string());
+    CHECK_EQ(Fs::normalize(std::filesystem::path("a//b///c")).string(),
+             std::filesystem::path("a/b/c").string());
+    CHECK_EQ(Fs::normalize(std::filesystem::path("../../a/./b")).string(),
+             std::filesystem::path("../../a/b").string());
+    CHECK_EQ(Fs::normalize(std::filesystem::path("./")).string(),
+             std::filesystem::path(".").string());
+    CHECK_EQ(Fs::normalize(std::filesystem::path("")).string(),
+             std::filesystem::path("").string());
+    if (pjh::platform::Os::is_windows)
+        CHECK_EQ(Fs::normalize(std::filesystem::path("C:\\a\\..")).string(),
+                 std::filesystem::path("C:").string());
+    else
+        CHECK_EQ(Fs::normalize(std::filesystem::path("/a/..")).string(),
+                 std::filesystem::path("/").string());
+}
+
+TEST_CASE("Fs::join concatenates parts with platform separator")
+{
+    auto p = Fs::join(std::filesystem::path("a"), "b", "c.txt");
+    CHECK_EQ(p.string(),
+             std::filesystem::path("a") / std::filesystem::path("b") /
+                 std::filesystem::path("c.txt"));
+
+    auto empty = Fs::join(std::filesystem::path("a"));
+    CHECK_EQ(empty.string(), std::filesystem::path("a").string());
+}
+
+TEST_CASE("Fs::join with an absolute part replaces base")
+{
+    auto p = Fs::join(std::filesystem::path("a/b"), "/x", "y");
+    CHECK_EQ(p.string(),
+             std::filesystem::path("/x") / std::filesystem::path("y"));
+}
+
+TEST_CASE("Fs::extension returns extension with dot")
+{
+    CHECK_EQ(Fs::extension(std::filesystem::path("a/b/c.txt")), ".txt");
+    CHECK_EQ(Fs::extension(std::filesystem::path("archive.tar.gz")), ".gz");
+    CHECK_EQ(Fs::extension(std::filesystem::path("noext")), "");
+    CHECK_EQ(Fs::extension(std::filesystem::path("dir/")), "");
+    CHECK_EQ(Fs::extension(std::filesystem::path(".hidden")), "");
+}
+
+TEST_CASE("Fs::stem returns name without extension")
+{
+    CHECK_EQ(Fs::stem(std::filesystem::path("a/b/c.txt")), "c");
+    CHECK_EQ(Fs::stem(std::filesystem::path("archive.tar.gz")), "archive.tar");
+    CHECK_EQ(Fs::stem(std::filesystem::path("noext")), "noext");
+    CHECK_EQ(Fs::stem(std::filesystem::path("dir")), "dir");
+    CHECK_EQ(Fs::stem(std::filesystem::path(".hidden")), ".hidden");
+}
+
+TEST_CASE("Fs::relative computes relative path lexically")
+{
+    auto r = Fs::relative(
+        std::filesystem::path("a/b"), std::filesystem::path("a/b/c/d"));
+    REQUIRE(r.is_ok());
+    CHECK_EQ(r.unwrap().string(), std::filesystem::path("c/d").string());
+
+    auto up = Fs::relative(
+        std::filesystem::path("a/b/c"), std::filesystem::path("a/b"));
+    REQUIRE(up.is_ok());
+    CHECK_EQ(up.unwrap().string(), std::filesystem::path("..").string());
+
+    auto same = Fs::relative(
+        std::filesystem::path("a/b"), std::filesystem::path("a/b"));
+    REQUIRE(same.is_ok());
+    CHECK_EQ(same.unwrap().string(), std::filesystem::path(".").string());
+}
+
+TEST_CASE("Fs::relative handles non-existent and unnormalized paths")
+{
+    auto r = Fs::relative(
+        std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
+    REQUIRE(r.is_ok());
+    CHECK_EQ(r.unwrap().string(), std::filesystem::path("c").string());
+}
+
+TEST_CASE("Fs::relative fails when paths share no common root")
+{
+    auto r = Fs::relative(
+        std::filesystem::path("relative"), std::filesystem::path("/absolute"));
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
 }

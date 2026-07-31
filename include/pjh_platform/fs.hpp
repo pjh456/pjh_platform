@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace pjh::platform
@@ -46,6 +47,45 @@ namespace pjh::platform
         [[nodiscard]] static auto temp_directory() -> std::filesystem::path;
 
         [[nodiscard]] static auto home_directory()
+            -> pjh::result::Result<std::filesystem::path, ErrorCode>;
+
+        // ── Path utilities ─────────────────────────────────────────────
+
+        /// Lexically normalizes `p`: collapses ".", "..", and duplicate
+        /// separators without touching the filesystem. Works on paths that
+        /// do not exist yet.
+        [[nodiscard]] static auto normalize(const std::filesystem::path& p)
+            -> std::filesystem::path;
+
+        /// Joins `base` with any number of path parts using the platform
+        /// separator. An absolute part replaces everything before it,
+        /// matching `operator/` semantics.
+        template <typename... Parts>
+        [[nodiscard]] static auto join(
+            const std::filesystem::path& base, Parts&&... parts)
+            -> std::filesystem::path
+        {
+            std::filesystem::path result = base;
+            ((result /= std::filesystem::path(std::forward<Parts>(parts))), ...);
+            return result;
+        }
+
+        /// Returns the file extension including the leading dot, or an empty
+        /// string when `p` has no extension. UTF-8 encoded.
+        [[nodiscard]] static auto extension(const std::filesystem::path& p)
+            -> std::string;
+
+        /// Returns the file name without the extension. UTF-8 encoded.
+        [[nodiscard]] static auto stem(const std::filesystem::path& p)
+            -> std::string;
+
+        /// Computes the path of `target` relative to `base` without touching
+        /// the filesystem (works for non-existent paths). Fails with
+        /// `InvalidArgument` when the two paths share no common root (e.g.
+        /// different drive letters or a relative vs. absolute mix).
+        [[nodiscard]] static auto relative(
+            const std::filesystem::path& base,
+            const std::filesystem::path& target)
             -> pjh::result::Result<std::filesystem::path, ErrorCode>;
     };
 

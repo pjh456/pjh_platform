@@ -355,4 +355,40 @@ namespace pjh::platform
         return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
     }
 
+    auto Fs::normalize(const std::filesystem::path& p) -> std::filesystem::path
+    {
+        return p.lexically_normal();
+    }
+
+    namespace {
+        auto u8_string(const std::filesystem::path& p) -> std::string
+        {
+            auto u8 = p.u8string();
+            return std::string(u8.begin(), u8.end());
+        }
+    }
+
+    auto Fs::extension(const std::filesystem::path& p) -> std::string
+    {
+        return u8_string(p.extension());
+    }
+
+    auto Fs::stem(const std::filesystem::path& p) -> std::string
+    {
+        return u8_string(p.stem());
+    }
+
+    auto Fs::relative(
+        const std::filesystem::path& base,
+        const std::filesystem::path& target)
+        -> pjh::result::Result<std::filesystem::path, ErrorCode>
+    {
+        auto rel = target.lexically_normal().lexically_relative(
+            base.lexically_normal());
+        if (rel.empty())
+            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+        return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
+            std::move(rel));
+    }
+
 } // namespace pjh::platform
