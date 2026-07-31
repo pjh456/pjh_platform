@@ -7,7 +7,9 @@
 ///          `FileWatcher`, `DirectorySnapshot`, and `Encoding` modules.
 /// @platform Windows, Linux, macOS.
 
+#include "pjh_platform/directory_diff.hpp"
 #include "pjh_platform/directory_snapshot.hpp"
+#include "pjh_platform/directory_status.hpp"
 #include "pjh_platform/encoding.hpp"
 #include "pjh_platform/env.hpp"
 #include "pjh_platform/error.hpp"
