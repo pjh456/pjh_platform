@@ -96,6 +96,42 @@ namespace pjh::platform::detail
 #endif
 
 #if PJH_PLATFORM_MACOS
+    auto open_file_watch(
+        FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
+        const std::filesystem::path &file_path) -> int
+    {
+        int fd = ::open(file_path.c_str(), O_RDONLY | O_EVTONLY);
+        if (fd == -1)
+            return -1;
+
+        struct kevent ev;
+        EV_SET(
+            &ev, static_cast<uintptr_t>(fd), EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
+            NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, nullptr);
+        if (::kevent(impl.fd, &ev, 1, nullptr, 0, nullptr) == -1)
+        {
+            ::close(fd);
+            return -1;
+        }
+
+        entry.fd_to_file[fd] = file_path;
+        dw.file_fds[file_path.filename()] = fd;
+        return fd;
+    }
+
+    auto close_file_watch(
+        WatchEntry &entry, WatchEntry::DirWatch &dw, const std::filesystem::path &name) -> void
+    {
+        auto it = dw.file_fds.find(name);
+        if (it == dw.file_fds.end())
+            return;
+        int fd = it->second;
+        entry.fd_to_file.erase(fd);
+        dw.file_fds.erase(it);
+        if (fd != -1)
+            ::close(fd);
+    }
+
     auto open_directory_watch(
         FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir)
         -> pjh::result::Result<void, ErrorCode>
@@ -107,7 +143,7 @@ namespace pjh::platform::detail
         struct kevent ev;
         EV_SET(
             &ev, static_cast<uintptr_t>(fd), EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
-            NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_ATTRIB | NOTE_EXTEND, 0, nullptr);
+            NOTE_WRITE | NOTE_DELETE | NOTE_RENAME, 0, nullptr);
         if (::kevent(impl.fd, &ev, 1, nullptr, 0, nullptr) == -1)
         {
             ::close(fd);
@@ -118,6 +154,12 @@ namespace pjh::platform::detail
         dw.fd = fd;
         dw.dir_path = dir;
         build_snapshot(dir, dw.snapshot);
+
+        // A directory's NOTE_WRITE does not fire when a file's contents
+        // change, so every existing file gets its own vnode watch.
+        for (const auto &[name, stamp] : dw.snapshot)
+            if (!stamp.is_dir)
+                (void)open_file_watch(impl, entry, dw, dir / name);
 
         entry.fd_to_dir[fd] = entry.dirs.insert(entry.dirs.end(), std::move(dw));
         return pjh::result::Result<void, ErrorCode>::Ok();
@@ -137,6 +179,13 @@ namespace pjh::platform::detail
         {
             if (it->dir_path == dir)
             {
+                for (const auto &[name, ffd] : it->file_fds)
+                {
+                    entry.fd_to_file.erase(ffd);
+                    if (ffd != -1)
+                        ::close(ffd);
+                }
+                it->file_fds.clear();
                 if (it->fd != -1)
                     ::close(it->fd);
                 entry.fd_to_dir.erase(it->fd);

@@ -48,17 +48,27 @@ namespace pjh::platform
 
                 for (const auto &[name, stamp] : current)
                 {
-                    auto old = dw.snapshot.find(name);
-                    if (old == dw.snapshot.end())
-                        push_filtered(entry, FileEventKind::Created, dw.dir_path / name, out);
-                    else if (!stamp.is_dir && !old->second.is_dir &&
-                             (stamp.size != old->second.size ||
-                              stamp.mtime_ns != old->second.mtime_ns))
-                        push_filtered(entry, FileEventKind::Modified, dw.dir_path / name, out);
+                    if (dw.snapshot.count(name))
+                        continue;
+                    push_filtered(entry, FileEventKind::Created, dw.dir_path / name, out);
+                    if (!stamp.is_dir)
+                        (void)open_file_watch(impl, entry, dw, dw.dir_path / name);
                 }
                 for (const auto &[name, stamp] : dw.snapshot)
-                    if (!current.count(name))
-                        push_filtered(entry, FileEventKind::Deleted, dw.dir_path / name, out);
+                {
+                    if (current.count(name))
+                        continue;
+                    push_filtered(entry, FileEventKind::Deleted, dw.dir_path / name, out);
+                    if (stamp.is_dir)
+                    {
+                        if (entry.recursive)
+                            close_directory_watch(entry, dw.dir_path / name);
+                    }
+                    else
+                    {
+                        close_file_watch(entry, dw, name);
+                    }
+                }
 
                 if (entry.recursive)
                 {
@@ -66,9 +76,6 @@ namespace pjh::platform
                         if (stamp.is_dir && !dw.snapshot.count(name) &&
                             !is_path_watched(entry, dw.dir_path / name))
                             (void)open_directory_watch(impl, entry, dw.dir_path / name);
-                    for (const auto &[name, stamp] : dw.snapshot)
-                        if (stamp.is_dir && !current.count(name))
-                            close_directory_watch(entry, dw.dir_path / name);
                 }
 
                 dw.snapshot = std::move(current);
@@ -230,16 +237,27 @@ namespace pjh::platform
                 int fd = static_cast<int>(events[i].ident);
                 for (auto &e : impl.entries)
                 {
-                    auto it = e->fd_to_dir.find(fd);
-                    if (it == e->fd_to_dir.end())
-                        continue;
-                    auto &dw = *it->second;
-                    if (events[i].fflags & NOTE_DELETE)
-                        push_filtered(*e, FileEventKind::Deleted, dw.dir_path, out);
-                    if (events[i].fflags & NOTE_RENAME)
-                        push_filtered(*e, FileEventKind::MovedFrom, dw.dir_path, out);
-                    if (events[i].fflags & (NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB))
-                        diff_directory(impl, *e, dw, out);
+                    auto dit = e->fd_to_dir.find(fd);
+                    if (dit != e->fd_to_dir.end())
+                    {
+                        auto &dw = *dit->second;
+                        if (events[i].fflags & NOTE_DELETE)
+                            push_filtered(*e, FileEventKind::Deleted, dw.dir_path, out);
+                        if (events[i].fflags & NOTE_RENAME)
+                            push_filtered(*e, FileEventKind::MovedFrom, dw.dir_path, out);
+                        if (events[i].fflags & NOTE_WRITE)
+                            diff_directory(impl, *e, dw, out);
+                        break;
+                    }
+                    auto pit = e->fd_to_file.find(fd);
+                    if (pit != e->fd_to_file.end())
+                    {
+                        // Content changes of a file inside a watched directory
+                        // only surface through its own vnode watch.
+                        if (events[i].fflags & (NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB))
+                            push_filtered(*e, FileEventKind::Modified, pit->second, out);
+                        break;
+                    }
                 }
             }
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));

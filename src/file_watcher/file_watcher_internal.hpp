@@ -61,15 +61,21 @@ namespace pjh::platform
         };
 #elif PJH_PLATFORM_MACOS
         /// @brief Per-watch state on macOS: every watched directory (root or
-        ///        subdirectory) has its own kqueue registration and snapshot.
+        ///        subdirectory) has its own kqueue registration, snapshot, and
+        ///        a per-file kqueue registration for content changes.
         struct WatchEntry
         {
-            /// @brief A single kqueue vnode watch plus its entry snapshot.
+            /// @brief A single watched directory. A directory's `NOTE_WRITE`
+            ///        only fires when its *entries* change (create/delete/
+            ///        rename), not when a file's contents change, so each file
+            ///        also gets its own vnode watch via `file_fds`.
             struct DirWatch
             {
                 int fd = -1;
                 std::filesystem::path dir_path;
                 std::map<std::filesystem::path, FileStamp> snapshot;
+                /// @brief Maps an entry filename to the fd watching that file.
+                std::map<std::filesystem::path, int> file_fds;
             };
 
             /// @brief Normalized absolute path of the watched file or directory.
@@ -85,7 +91,10 @@ namespace pjh::platform
             ///        `fd_to_dir`) stable while subdirectory watches are added
             ///        or removed during polling.
             std::list<DirWatch> dirs;
+            /// @brief Maps a directory fd to its `DirWatch`.
             std::unordered_map<int, std::list<DirWatch>::iterator> fd_to_dir;
+            /// @brief Maps a per-file vnode fd to the file's absolute path.
+            std::unordered_map<int, std::filesystem::path> fd_to_file;
         };
 #else
         /// @brief Per-watch state on Linux: the root `inotify` watch descriptor
@@ -129,10 +138,20 @@ namespace pjh::platform
 
 #if PJH_PLATFORM_MACOS
         /// @brief Registers a kqueue vnode watch on @p dir and records its
-        ///        initial snapshot. Failure leaves no resources behind.
+        ///        initial snapshot, including per-file watches. Failure leaves
+        ///        no resources behind.
         [[nodiscard]] auto open_directory_watch(
             FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir)
             -> pjh::result::Result<void, ErrorCode>;
+        /// @brief Registers a kqueue vnode watch on the file @p file_path,
+        ///        which must live inside the directory watched by @p dw.
+        ///        Returns the fd, or -1 on failure.
+        auto open_file_watch(
+            FileWatcherImpl &impl, WatchEntry &entry, WatchEntry::DirWatch &dw,
+            const std::filesystem::path &file_path) -> int;
+        /// @brief Closes the watch on entry @p name inside @p dw.
+        auto close_file_watch(WatchEntry &entry, WatchEntry::DirWatch &dw,
+            const std::filesystem::path &name) -> void;
         [[nodiscard]] auto is_path_watched(
             const WatchEntry &entry, const std::filesystem::path &dir) -> bool;
         auto close_directory_watch(WatchEntry &entry, const std::filesystem::path &dir) -> void;

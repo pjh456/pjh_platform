@@ -47,10 +47,16 @@ namespace pjh::platform
             }
 #elif PJH_PLATFORM_MACOS
             for (auto &dw : entry.dirs)
+            {
+                for (const auto &[name, ffd] : dw.file_fds)
+                    if (ffd != -1)
+                        ::close(ffd);
                 if (dw.fd != -1)
                     ::close(dw.fd);
+            }
             entry.dirs.clear();
             entry.fd_to_dir.clear();
+            entry.fd_to_file.clear();
 #else
             for (auto &[wd, unused] : entry.wd_to_path)
                 ::inotify_rm_watch(impl.fd, wd);
