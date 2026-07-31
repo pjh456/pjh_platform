@@ -178,7 +178,14 @@ namespace pjh::platform
         {
             for (const auto &pe : entry.pending_events)
             {
-                const auto &p = pe.path;
+                // FSEvents reports paths with symlinks resolved (e.g.
+                // /private/var/...); remap back into the lexical watch_root
+                // space so filters and snapshots stay consistent with the
+                // paths reported to callers.
+                std::filesystem::path p = pe.path;
+                if (!entry.canonical_root.empty() && path_is_under(p, entry.canonical_root))
+                    p = entry.watch_root / p.lexically_relative(entry.canonical_root);
+
                 if (p != entry.watch_root && !path_is_under(p, entry.watch_root))
                     continue;
                 if (!entry.is_directory && p != entry.path)

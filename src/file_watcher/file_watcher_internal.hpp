@@ -68,6 +68,11 @@ namespace pjh::platform
             ///        watched file, or the directory itself).
             std::filesystem::path watch_root;
 
+            /// @brief `watch_root` with symlinks resolved, as FSEvents reports
+            ///        paths. Used to remap reported paths back into the lexical
+            ///        `watch_root` space (e.g. `/private/var` -> `/var`).
+            std::filesystem::path canonical_root;
+
             /// @brief FSEvents stream watching `watch_root`.
             FSEventStreamRef stream = nullptr;
             /// @brief Baseline snapshot per directory under `watch_root`.

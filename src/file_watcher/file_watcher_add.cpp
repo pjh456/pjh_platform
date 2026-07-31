@@ -67,6 +67,11 @@ namespace pjh::platform
             return pjh::result::Result<void, ErrorCode>::Ok();
 
 #elif PJH_PLATFORM_MACOS
+            std::error_code cec;
+            entry.canonical_root = std::filesystem::weakly_canonical(entry.watch_root, cec);
+            if (cec || entry.canonical_root.empty())
+                return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
+
             auto root_cap = DirectorySnapshot::capture(entry.watch_root);
             if (root_cap.is_err())
                 return pjh::result::Failure<ErrorCode>{root_cap.unwrap_err()};
