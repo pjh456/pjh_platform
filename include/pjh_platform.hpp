@@ -4,9 +4,10 @@
 /// @file pjh_platform.hpp
 /// @brief Umbrella header exposing the complete pjh_platform API.
 /// @details Includes the platform detection macros and the `Os`, `Env`, `Fs`,
-///          `FileWatcher`, and `Encoding` modules.
+///          `FileWatcher`, `DirectorySnapshot`, and `Encoding` modules.
 /// @platform Windows, Linux, macOS.
 
+#include "pjh_platform/directory_snapshot.hpp"
 #include "pjh_platform/encoding.hpp"
 #include "pjh_platform/env.hpp"
 #include "pjh_platform/error.hpp"

@@ -9,6 +9,7 @@ set(PJH_PLATFORM_TEST_SOURCES
     test_fs.cpp
     test_encoding.cpp
     test_file_watcher.cpp
+    test_directory_snapshot.cpp
 )
 
 add_executable(pjh_platform_tests ${PJH_PLATFORM_TEST_SOURCES})

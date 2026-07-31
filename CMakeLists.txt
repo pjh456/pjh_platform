@@ -8,6 +8,7 @@ target_sources(pjh_platform
     PRIVATE
     src/env.cpp
     src/fs.cpp
+    src/directory_snapshot.cpp
     src/file_watcher/file_watcher.cpp
     src/file_watcher/file_watcher_add.cpp
     src/file_watcher/file_watcher_remove.cpp
