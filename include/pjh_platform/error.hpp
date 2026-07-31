@@ -41,6 +41,16 @@ namespace pjh::platform
 
         /// @brief An unrecognized error that could not be mapped.
         Unknown,
+
+        /// @brief A system resource limit was reached (for example the
+        ///        `inotify` watch count limit).
+        LimitReached,
+
+        /// @brief A blocking operation was interrupted by a signal.
+        Interrupted,
+
+        /// @brief The target is already being watched by a `FileWatcher`.
+        AlreadyWatched,
     };
 
 }  // namespace pjh::platform
