@@ -352,10 +352,10 @@ namespace pjh::platform
     auto FileWatcher::poll(std::chrono::milliseconds timeout)
         -> pjh::result::Result<std::vector<FileEvent>, ErrorCode>
     {
-        auto &impl = *impl_;
-        if (impl.closed)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
-        if (impl.entries.empty())
+    if (!impl_ || impl_->closed)
+        return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+    auto &impl = *impl_;
+    if (impl.entries.empty())
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
                 std::vector<FileEvent>{});
         return detail::platform_poll(impl, timeout);

@@ -68,9 +68,9 @@ namespace pjh::platform
     auto FileWatcher::remove(const std::filesystem::path &path)
         -> pjh::result::Result<void, ErrorCode>
     {
-        auto &impl = *impl_;
-        if (impl.closed)
+        if (!impl_ || impl_->closed)
             return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+        auto &impl = *impl_;
 
         auto abs = detail::make_absolute(path);
         if (abs.is_err())
