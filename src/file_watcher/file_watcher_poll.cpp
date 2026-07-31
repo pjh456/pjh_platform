@@ -202,9 +202,24 @@ namespace pjh::platform
                 // /private/var/...); remap back into the lexical watch_root
                 // space so filters and snapshots stay consistent with the
                 // paths reported to callers.
-                std::filesystem::path p = pe.path;
-                if (!entry.canonical_root.empty() && path_is_under(p, entry.canonical_root))
-                    p = entry.watch_root / p.lexically_relative(entry.canonical_root);
+                // FSEvents reports paths with symlinks resolved (e.g.
+                // /private/var/...) and may append a trailing slash when the
+                // reported path is the watched directory itself. lexically_normal
+                // keeps that trailing slash, so drop it to make the path compare
+                // equal to the canonical root.
+                std::filesystem::path p = pe.path.lexically_normal();
+                while (p.has_relative_path() && p.filename().empty())
+                    p = p.parent_path();
+                if (!entry.canonical_root.empty())
+                {
+                    // FSEvents may coalesce several changes onto the watched
+                    // directory itself. path_is_under(X, X) is false, so handle
+                    // the equality case explicitly.
+                    if (p == entry.canonical_root)
+                        p = entry.watch_root;
+                    else if (path_is_under(p, entry.canonical_root))
+                        p = entry.watch_root / p.lexically_relative(entry.canonical_root);
+                }
 
                 if (p != entry.watch_root && !path_is_under(p, entry.watch_root))
                     continue;
