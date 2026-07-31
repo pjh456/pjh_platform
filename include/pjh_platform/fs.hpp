@@ -1,9 +1,8 @@
 #ifndef INCLUDE_PJH_PLATFORM_FS_HPP
 #define INCLUDE_PJH_PLATFORM_FS_HPP
 
-#include <pjh_platform/error.hpp>
-
 #include <filesystem>
+#include <pjh_platform/error.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -62,7 +61,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto create_directories(const std::filesystem::path& p)
+        static auto create_directories(const std::filesystem::path &p)
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
@@ -86,7 +85,7 @@ namespace pjh::platform
          * @platform All supported platforms; Windows additionally handles
          *           read-only attributes.
          */
-        static auto remove_all(const std::filesystem::path& p)
+        static auto remove_all(const std::filesystem::path &p)
             -> pjh::result::Result<std::uintmax_t, ErrorCode>;
 
         /**
@@ -109,7 +108,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto exists(const std::filesystem::path& p) -> bool;
+        [[nodiscard]] static auto exists(const std::filesystem::path &p) -> bool;
 
         /**
          * @brief Checks whether @p p is a regular file.
@@ -128,7 +127,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto is_regular_file(const std::filesystem::path& p) -> bool;
+        [[nodiscard]] static auto is_regular_file(const std::filesystem::path &p) -> bool;
 
         /**
          * @brief Checks whether @p p is a directory.
@@ -145,7 +144,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto is_directory(const std::filesystem::path& p) -> bool;
+        [[nodiscard]] static auto is_directory(const std::filesystem::path &p) -> bool;
 
         /**
          * @brief Returns the size in bytes of the regular file @p p.
@@ -162,7 +161,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto file_size(const std::filesystem::path& p)
+        [[nodiscard]] static auto file_size(const std::filesystem::path &p)
             -> pjh::result::Result<std::uintmax_t, ErrorCode>;
 
         /**
@@ -188,7 +187,7 @@ namespace pjh::platform
          * @platform All supported platforms, with native
          *           `mmap`/`CreateFileMapping` implementations.
          */
-        [[nodiscard]] static auto read_file(const std::filesystem::path& p)
+        [[nodiscard]] static auto read_file(const std::filesystem::path &p)
             -> pjh::result::Result<std::string, ErrorCode>;
 
         /**
@@ -213,8 +212,7 @@ namespace pjh::platform
          * @platform All supported platforms, with native
          *           `WriteFile`/`write` implementations.
          */
-        static auto write_file(
-            const std::filesystem::path& p, std::string_view content)
+        static auto write_file(const std::filesystem::path &p, std::string_view content)
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
@@ -235,7 +233,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto list_directory(const std::filesystem::path& p)
+        [[nodiscard]] static auto list_directory(const std::filesystem::path &p)
             -> pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>;
 
         /**
@@ -296,7 +294,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms; uses native separator semantics.
          */
-        [[nodiscard]] static auto normalize(const std::filesystem::path& p)
+        [[nodiscard]] static auto normalize(const std::filesystem::path &p)
             -> std::filesystem::path;
 
         /**
@@ -322,8 +320,7 @@ namespace pjh::platform
          */
         template <typename... Parts>
         [[nodiscard]] static auto join(
-            const std::filesystem::path& base, Parts&&... parts)
-            -> std::filesystem::path
+            const std::filesystem::path &base, Parts &&...parts) -> std::filesystem::path
         {
             std::filesystem::path result = base;
             ((result /= std::filesystem::path(std::forward<Parts>(parts))), ...);
@@ -350,7 +347,7 @@ namespace pjh::platform
          * @platform All supported platforms; UTF-8 regardless of the native
          *           wide encoding.
          */
-        [[nodiscard]] static auto extension(const std::filesystem::path& p)
+        [[nodiscard]] static auto extension(const std::filesystem::path &p)
             -> std::string;
 
         /**
@@ -373,8 +370,7 @@ namespace pjh::platform
          * @platform All supported platforms; UTF-8 regardless of the native
          *           wide encoding.
          */
-        [[nodiscard]] static auto stem(const std::filesystem::path& p)
-            -> std::string;
+        [[nodiscard]] static auto stem(const std::filesystem::path &p) -> std::string;
 
         /**
          * @brief Computes the path of @p target relative to @p base.
@@ -398,11 +394,10 @@ namespace pjh::platform
          * @platform All supported platforms.
          */
         [[nodiscard]] static auto relative(
-            const std::filesystem::path& base,
-            const std::filesystem::path& target)
+            const std::filesystem::path &base, const std::filesystem::path &target)
             -> pjh::result::Result<std::filesystem::path, ErrorCode>;
     };
 
-} // namespace pjh::platform
+}  // namespace pjh::platform
 
-#endif // INCLUDE_PJH_PLATFORM_FS_HPP
+#endif  // INCLUDE_PJH_PLATFORM_FS_HPP

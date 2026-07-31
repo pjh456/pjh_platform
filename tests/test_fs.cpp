@@ -2,7 +2,6 @@
 
 #include <fstream>
 #include <iostream>
-
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/os.hpp>
 
@@ -77,8 +76,7 @@ TEST_CASE("Fs::remove_all handles read-only files")
     auto w1 = Fs::write_file(f1, "read only content");
     REQUIRE(w1.is_ok());
     std::filesystem::permissions(
-        f1, std::filesystem::perms::owner_read,
-        std::filesystem::perm_options::replace);
+        f1, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
 
     auto sub = tmp / "subdir";
     std::filesystem::create_directories(sub);
@@ -86,8 +84,7 @@ TEST_CASE("Fs::remove_all handles read-only files")
     auto w2 = Fs::write_file(f2, "nested content");
     REQUIRE(w2.is_ok());
     std::filesystem::permissions(
-        f2, std::filesystem::perms::owner_read,
-        std::filesystem::perm_options::replace);
+        f2, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
 
     auto r = Fs::remove_all(tmp);
     CHECK(r.is_ok());
@@ -165,30 +162,37 @@ TEST_CASE("Fs::normalize collapses dot and dot-dot elements")
     using pjh::platform::ErrorCode;
     auto sep = std::filesystem::path::preferred_separator;
 
-    CHECK_EQ(Fs::normalize(std::filesystem::path("a/./b/../c")).string(),
-             std::filesystem::path("a/c").string());
-    CHECK_EQ(Fs::normalize(std::filesystem::path("a//b///c")).string(),
-             std::filesystem::path("a/b/c").string());
-    CHECK_EQ(Fs::normalize(std::filesystem::path("../../a/./b")).string(),
-             std::filesystem::path("../../a/b").string());
-    CHECK_EQ(Fs::normalize(std::filesystem::path("./")).string(),
-             std::filesystem::path(".").string());
-    CHECK_EQ(Fs::normalize(std::filesystem::path("")).string(),
-             std::filesystem::path("").string());
+    CHECK_EQ(
+        Fs::normalize(std::filesystem::path("a/./b/../c")).string(),
+        std::filesystem::path("a/c").string());
+    CHECK_EQ(
+        Fs::normalize(std::filesystem::path("a//b///c")).string(),
+        std::filesystem::path("a/b/c").string());
+    CHECK_EQ(
+        Fs::normalize(std::filesystem::path("../../a/./b")).string(),
+        std::filesystem::path("../../a/b").string());
+    CHECK_EQ(
+        Fs::normalize(std::filesystem::path("./")).string(),
+        std::filesystem::path(".").string());
+    CHECK_EQ(
+        Fs::normalize(std::filesystem::path("")).string(),
+        std::filesystem::path("").string());
     if (pjh::platform::Os::is_windows)
-        CHECK_EQ(Fs::normalize(std::filesystem::path("C:\\a\\..")).string(),
-                 std::filesystem::path("C:").string());
+        CHECK_EQ(
+            Fs::normalize(std::filesystem::path("C:\\a\\..")).string(),
+            std::filesystem::path("C:").string());
     else
-        CHECK_EQ(Fs::normalize(std::filesystem::path("/a/..")).string(),
-                 std::filesystem::path("/").string());
+        CHECK_EQ(
+            Fs::normalize(std::filesystem::path("/a/..")).string(),
+            std::filesystem::path("/").string());
 }
 
 TEST_CASE("Fs::join concatenates parts with platform separator")
 {
     auto p = Fs::join(std::filesystem::path("a"), "b", "c.txt");
-    CHECK_EQ(p.string(),
-             std::filesystem::path("a") / std::filesystem::path("b") /
-                 std::filesystem::path("c.txt"));
+    CHECK_EQ(
+        p.string(), std::filesystem::path("a") / std::filesystem::path("b") /
+                        std::filesystem::path("c.txt"));
 
     auto empty = Fs::join(std::filesystem::path("a"));
     CHECK_EQ(empty.string(), std::filesystem::path("a").string());
@@ -197,8 +201,7 @@ TEST_CASE("Fs::join concatenates parts with platform separator")
 TEST_CASE("Fs::join with an absolute part replaces base")
 {
     auto p = Fs::join(std::filesystem::path("a/b"), "/x", "y");
-    CHECK_EQ(p.string(),
-             std::filesystem::path("/x") / std::filesystem::path("y"));
+    CHECK_EQ(p.string(), std::filesystem::path("/x") / std::filesystem::path("y"));
 }
 
 TEST_CASE("Fs::extension returns extension with dot")
@@ -221,26 +224,23 @@ TEST_CASE("Fs::stem returns name without extension")
 
 TEST_CASE("Fs::relative computes relative path lexically")
 {
-    auto r = Fs::relative(
-        std::filesystem::path("a/b"), std::filesystem::path("a/b/c/d"));
+    auto r = Fs::relative(std::filesystem::path("a/b"), std::filesystem::path("a/b/c/d"));
     REQUIRE(r.is_ok());
     CHECK_EQ(r.unwrap().string(), std::filesystem::path("c/d").string());
 
-    auto up = Fs::relative(
-        std::filesystem::path("a/b/c"), std::filesystem::path("a/b"));
+    auto up = Fs::relative(std::filesystem::path("a/b/c"), std::filesystem::path("a/b"));
     REQUIRE(up.is_ok());
     CHECK_EQ(up.unwrap().string(), std::filesystem::path("..").string());
 
-    auto same = Fs::relative(
-        std::filesystem::path("a/b"), std::filesystem::path("a/b"));
+    auto same = Fs::relative(std::filesystem::path("a/b"), std::filesystem::path("a/b"));
     REQUIRE(same.is_ok());
     CHECK_EQ(same.unwrap().string(), std::filesystem::path(".").string());
 }
 
 TEST_CASE("Fs::relative handles non-existent and unnormalized paths")
 {
-    auto r = Fs::relative(
-        std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
+    auto r =
+        Fs::relative(std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
     REQUIRE(r.is_ok());
     CHECK_EQ(r.unwrap().string(), std::filesystem::path("c").string());
 }

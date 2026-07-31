@@ -1,7 +1,6 @@
-#include <iostream>
-
 #include <doctest/doctest.h>
 
+#include <iostream>
 #include <pjh_platform/encoding.hpp>
 
 using enc = pjh::platform::Encoding;
@@ -51,8 +50,7 @@ TEST_CASE("Encoding::to_wide / to_utf8 round-trip: long text")
 {
     std::string input;
     input.reserve(10000);
-    for (int i = 0; i < 1000; ++i)
-        input += "ABC\xE4\xB8\xAD\xE6\x96\x87\xF0\x9F\x98\x80";
+    for (int i = 0; i < 1000; ++i) input += "ABC\xE4\xB8\xAD\xE6\x96\x87\xF0\x9F\x98\x80";
 
     auto w = enc::to_wide(input);
     CHECK(!w.empty());

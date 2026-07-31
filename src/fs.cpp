@@ -1,9 +1,8 @@
+#include <cerrno>
 #include <pjh_platform/env.hpp>
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
-
-#include <cerrno>
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
@@ -17,9 +16,10 @@
 namespace pjh::platform
 {
 
-    namespace {
+    namespace
+    {
 
-        auto map_error_code(const std::error_code& ec) -> ErrorCode
+        auto map_error_code(const std::error_code &ec) -> ErrorCode
         {
             if (!ec)
                 return ErrorCode::Success;
@@ -28,16 +28,23 @@ namespace pjh::platform
             {
                 switch (ec.value())
                 {
-                case ENOENT:  return ErrorCode::NotFound;
+                case ENOENT:
+                    return ErrorCode::NotFound;
                 case EACCES:
-                case EPERM:   return ErrorCode::PermissionDenied;
-                case EEXIST:  return ErrorCode::AlreadyExists;
-                case EINVAL:  return ErrorCode::InvalidArgument;
+                case EPERM:
+                    return ErrorCode::PermissionDenied;
+                case EEXIST:
+                    return ErrorCode::AlreadyExists;
+                case EINVAL:
+                    return ErrorCode::InvalidArgument;
 #ifdef ENOTSUP
-                case ENOTSUP: return ErrorCode::NotSupported;
+                case ENOTSUP:
+                    return ErrorCode::NotSupported;
 #endif
-                case EIO:     return ErrorCode::IoError;
-                default:      return ErrorCode::Unknown;
+                case EIO:
+                    return ErrorCode::IoError;
+                default:
+                    return ErrorCode::Unknown;
                 }
             }
 
@@ -47,12 +54,18 @@ namespace pjh::platform
                 switch (static_cast<unsigned long>(ec.value()))
                 {
                 case ERROR_FILE_NOT_FOUND:
-                case ERROR_PATH_NOT_FOUND:  return ErrorCode::NotFound;
-                case ERROR_ACCESS_DENIED:   return ErrorCode::PermissionDenied;
-                case ERROR_ALREADY_EXISTS:  return ErrorCode::AlreadyExists;
-                case ERROR_INVALID_PARAMETER: return ErrorCode::InvalidArgument;
-                case ERROR_NOT_SUPPORTED:   return ErrorCode::NotSupported;
-                default:                    return ErrorCode::Unknown;
+                case ERROR_PATH_NOT_FOUND:
+                    return ErrorCode::NotFound;
+                case ERROR_ACCESS_DENIED:
+                    return ErrorCode::PermissionDenied;
+                case ERROR_ALREADY_EXISTS:
+                    return ErrorCode::AlreadyExists;
+                case ERROR_INVALID_PARAMETER:
+                    return ErrorCode::InvalidArgument;
+                case ERROR_NOT_SUPPORTED:
+                    return ErrorCode::NotSupported;
+                default:
+                    return ErrorCode::Unknown;
                 }
             }
 #endif
@@ -67,7 +80,7 @@ namespace pjh::platform
         return std::filesystem::current_path();
     }
 
-    auto Fs::create_directories(const std::filesystem::path& p)
+    auto Fs::create_directories(const std::filesystem::path &p)
         -> pjh::result::Result<void, ErrorCode>
     {
         std::error_code ec;
@@ -77,7 +90,7 @@ namespace pjh::platform
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
-    auto Fs::remove_all(const std::filesystem::path& p)
+    auto Fs::remove_all(const std::filesystem::path &p)
         -> pjh::result::Result<std::uintmax_t, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
@@ -86,11 +99,9 @@ namespace pjh::platform
         {
             std::error_code dir_ec;
             for (auto it = std::filesystem::recursive_directory_iterator(
-                     p,
-                     std::filesystem::directory_options::skip_permission_denied,
+                     p, std::filesystem::directory_options::skip_permission_denied,
                      dir_ec);
-                 it != std::filesystem::recursive_directory_iterator();
-                 ++it)
+                 it != std::filesystem::recursive_directory_iterator(); ++it)
             {
                 if (dir_ec)
                 {
@@ -98,12 +109,10 @@ namespace pjh::platform
                     continue;
                 }
                 DWORD attrs = GetFileAttributesW(it->path().c_str());
-                if (attrs != INVALID_FILE_ATTRIBUTES &&
-                    (attrs & FILE_ATTRIBUTE_READONLY))
+                if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY))
                 {
                     SetFileAttributesW(
-                        it->path().c_str(),
-                        attrs & ~FILE_ATTRIBUTE_READONLY);
+                        it->path().c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
                 }
             }
         }
@@ -121,22 +130,22 @@ namespace pjh::platform
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(count);
     }
 
-    auto Fs::exists(const std::filesystem::path& p) -> bool
+    auto Fs::exists(const std::filesystem::path &p) -> bool
     {
         return std::filesystem::exists(p);
     }
 
-    auto Fs::is_regular_file(const std::filesystem::path& p) -> bool
+    auto Fs::is_regular_file(const std::filesystem::path &p) -> bool
     {
         return std::filesystem::is_regular_file(p);
     }
 
-    auto Fs::is_directory(const std::filesystem::path& p) -> bool
+    auto Fs::is_directory(const std::filesystem::path &p) -> bool
     {
         return std::filesystem::is_directory(p);
     }
 
-    auto Fs::file_size(const std::filesystem::path& p)
+    auto Fs::file_size(const std::filesystem::path &p)
         -> pjh::result::Result<std::uintmax_t, ErrorCode>
     {
         std::error_code ec;
@@ -146,18 +155,13 @@ namespace pjh::platform
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(sz);
     }
 
-    auto Fs::read_file(const std::filesystem::path& p)
+    auto Fs::read_file(const std::filesystem::path &p)
         -> pjh::result::Result<std::string, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         HANDLE hFile = CreateFileW(
-            p.c_str(),
-            GENERIC_READ,
-            FILE_SHARE_READ,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr);
+            p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile == INVALID_HANDLE_VALUE)
         {
             DWORD err = GetLastError();
@@ -181,20 +185,15 @@ namespace pjh::platform
             return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
         }
 
-        HANDLE hMapping = CreateFileMappingW(
-            hFile,
-            nullptr,
-            PAGE_READONLY,
-            0,
-            0,
-            nullptr);
+        HANDLE hMapping =
+            CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
         if (!hMapping)
         {
             CloseHandle(hFile);
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         }
 
-        void* addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+        void *addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
         if (!addr)
         {
             CloseHandle(hMapping);
@@ -203,8 +202,7 @@ namespace pjh::platform
         }
 
         std::string content(
-            static_cast<const char*>(addr),
-            static_cast<std::size_t>(fileSize.QuadPart));
+            static_cast<const char *>(addr), static_cast<std::size_t>(fileSize.QuadPart));
 
         UnmapViewOfFile(addr);
         CloseHandle(hMapping);
@@ -235,13 +233,8 @@ namespace pjh::platform
             return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
         }
 
-        void* addr = ::mmap(
-            nullptr,
-            static_cast<std::size_t>(st.st_size),
-            PROT_READ,
-            MAP_PRIVATE,
-            fd,
-            0);
+        void *addr = ::mmap(
+            nullptr, static_cast<std::size_t>(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
         if (addr == MAP_FAILED)
         {
             ::close(fd);
@@ -249,8 +242,7 @@ namespace pjh::platform
         }
 
         std::string content(
-            static_cast<const char*>(addr),
-            static_cast<std::size_t>(st.st_size));
+            static_cast<const char *>(addr), static_cast<std::size_t>(st.st_size));
 
         ::munmap(addr, static_cast<std::size_t>(st.st_size));
         ::close(fd);
@@ -258,18 +250,12 @@ namespace pjh::platform
 #endif
     }
 
-    auto Fs::write_file(
-        const std::filesystem::path& p, std::string_view content)
+    auto Fs::write_file(const std::filesystem::path &p, std::string_view content)
         -> pjh::result::Result<void, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         HANDLE hFile = CreateFileW(
-            p.c_str(),
-            GENERIC_WRITE,
-            0,
-            nullptr,
-            CREATE_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
+            p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
             nullptr);
         if (hFile == INVALID_HANDLE_VALUE)
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
@@ -278,10 +264,7 @@ namespace pjh::platform
         {
             DWORD written;
             if (!WriteFile(
-                    hFile,
-                    content.data(),
-                    static_cast<DWORD>(content.size()),
-                    &written,
+                    hFile, content.data(), static_cast<DWORD>(content.size()), &written,
                     nullptr) ||
                 written != content.size())
             {
@@ -295,15 +278,14 @@ namespace pjh::platform
 
 #else
         int fd = ::open(
-            p.c_str(),
-            O_WRONLY | O_CREAT | O_TRUNC,
+            p.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
             S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         if (fd == -1)
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
 
         if (!content.empty())
         {
-            const char* data = content.data();
+            const char *data = content.data();
             std::size_t remaining = content.size();
             while (remaining > 0)
             {
@@ -323,16 +305,17 @@ namespace pjh::platform
 #endif
     }
 
-    auto Fs::list_directory(const std::filesystem::path& p)
+    auto Fs::list_directory(const std::filesystem::path &p)
         -> pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>
     {
         std::error_code ec;
         std::vector<std::filesystem::path> entries;
-        for (const auto& entry : std::filesystem::directory_iterator(p, ec))
+        for (const auto &entry : std::filesystem::directory_iterator(p, ec))
             entries.push_back(entry.path());
         if (ec)
             return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
-        return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(std::move(entries));
+        return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(
+            std::move(entries));
     }
 
     auto Fs::temp_directory() -> std::filesystem::path
@@ -340,12 +323,12 @@ namespace pjh::platform
         return std::filesystem::temp_directory_path();
     }
 
-    auto Fs::home_directory()
-        -> pjh::result::Result<std::filesystem::path, ErrorCode>
+    auto Fs::home_directory() -> pjh::result::Result<std::filesystem::path, ErrorCode>
     {
         auto home = Env::get("HOME");
         if (home.is_ok())
-            return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(std::filesystem::path(home.unwrap()));
+            return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
+                std::filesystem::path(home.unwrap()));
 #if PJH_PLATFORM_WINDOWS
         auto userprofile = Env::get("USERPROFILE");
         if (userprofile.is_ok())
@@ -355,40 +338,38 @@ namespace pjh::platform
         return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
     }
 
-    auto Fs::normalize(const std::filesystem::path& p) -> std::filesystem::path
+    auto Fs::normalize(const std::filesystem::path &p) -> std::filesystem::path
     {
         return p.lexically_normal();
     }
 
-    namespace {
-        auto u8_string(const std::filesystem::path& p) -> std::string
+    namespace
+    {
+        auto u8_string(const std::filesystem::path &p) -> std::string
         {
             auto u8 = p.u8string();
             return std::string(u8.begin(), u8.end());
         }
     }
 
-    auto Fs::extension(const std::filesystem::path& p) -> std::string
+    auto Fs::extension(const std::filesystem::path &p) -> std::string
     {
         return u8_string(p.extension());
     }
 
-    auto Fs::stem(const std::filesystem::path& p) -> std::string
+    auto Fs::stem(const std::filesystem::path &p) -> std::string
     {
         return u8_string(p.stem());
     }
 
     auto Fs::relative(
-        const std::filesystem::path& base,
-        const std::filesystem::path& target)
+        const std::filesystem::path &base, const std::filesystem::path &target)
         -> pjh::result::Result<std::filesystem::path, ErrorCode>
     {
-        auto rel = target.lexically_normal().lexically_relative(
-            base.lexically_normal());
+        auto rel = target.lexically_normal().lexically_relative(base.lexically_normal());
         if (rel.empty())
             return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
-        return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
-            std::move(rel));
+        return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(std::move(rel));
     }
 
-} // namespace pjh::platform
+}  // namespace pjh::platform

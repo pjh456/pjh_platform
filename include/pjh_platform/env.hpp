@@ -2,7 +2,6 @@
 #define INCLUDE_PJH_PLATFORM_ENV_HPP
 
 #include <pjh_platform/error.hpp>
-
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -91,8 +90,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto unset(std::string_view name)
-            -> pjh::result::Result<void, ErrorCode>;
+        static auto unset(std::string_view name) -> pjh::result::Result<void, ErrorCode>;
 
         /**
          * @brief Returns a copy of the entire environment as a name-to-value
@@ -133,6 +131,6 @@ namespace pjh::platform
             -> std::vector<std::pair<std::string, std::string>>;
     };
 
-} // namespace pjh::platform
+}  // namespace pjh::platform
 
-#endif // INCLUDE_PJH_PLATFORM_ENV_HPP
+#endif  // INCLUDE_PJH_PLATFORM_ENV_HPP

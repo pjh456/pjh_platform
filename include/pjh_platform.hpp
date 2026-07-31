@@ -9,8 +9,8 @@
 
 #include "pjh_platform/encoding.hpp"
 #include "pjh_platform/env.hpp"
+#include "pjh_platform/error.hpp"
 #include "pjh_platform/fs.hpp"
 #include "pjh_platform/os.hpp"
-#include "pjh_platform/error.hpp"
 
-#endif // INCLUDE_PJH_PLATFORM_HPP
+#endif  // INCLUDE_PJH_PLATFORM_HPP

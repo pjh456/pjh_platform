@@ -1,15 +1,14 @@
+#include <cstdlib>
+#include <cstring>
 #include <pjh_platform/encoding.hpp>
 #include <pjh_platform/env.hpp>
 #include <pjh_platform/platform.hpp>
-
-#include <cstdlib>
-#include <cstring>
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
 #else
 #include <cerrno>
-extern "C" char** environ;
+extern "C" char **environ;
 #endif
 
 namespace pjh::platform
@@ -17,40 +16,42 @@ namespace pjh::platform
 
     // ── Env ──────────────────────────────────────────────────────────────
 
-    namespace {
+    namespace
+    {
         template <typename Func>
-        void for_each_env_entry(Func&& func)
+        void for_each_env_entry(Func &&func)
         {
 #if PJH_PLATFORM_WINDOWS
-            auto* block = GetEnvironmentStringsW();
+            auto *block = GetEnvironmentStringsW();
             if (!block)
                 return;
-            for (auto* env = block; *env; env += std::wcslen(env) + 1)
+            for (auto *env = block; *env; env += std::wcslen(env) + 1)
             {
                 std::wstring_view entry(env);
                 auto eq = entry.find(L'=');
                 if (eq != std::wstring_view::npos)
-                    func(Encoding::to_utf8(entry.substr(0, eq)),
-                         Encoding::to_utf8(entry.substr(eq + 1)));
+                    func(
+                        Encoding::to_utf8(entry.substr(0, eq)),
+                        Encoding::to_utf8(entry.substr(eq + 1)));
             }
             FreeEnvironmentStringsW(block);
 #else
             if (!environ)
                 return;
-            for (auto** env = environ; *env; ++env)
+            for (auto **env = environ; *env; ++env)
             {
                 std::string_view entry(*env);
                 auto eq = entry.find('=');
                 if (eq != std::string_view::npos)
-                    func(std::string(entry.substr(0, eq)),
-                         std::string(entry.substr(eq + 1)));
+                    func(
+                        std::string(entry.substr(0, eq)),
+                        std::string(entry.substr(eq + 1)));
             }
 #endif
         }
     }
 
-    auto Env::get(std::string_view name)
-        -> pjh::result::Result<std::string, ErrorCode>
+    auto Env::get(std::string_view name) -> pjh::result::Result<std::string, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         auto wname = Encoding::to_wide(name);
@@ -62,8 +63,8 @@ namespace pjh::platform
         wvalue.pop_back();
         return pjh::result::Result<std::string, ErrorCode>::Ok(Encoding::to_utf8(wvalue));
 #else
-        auto n   = std::string(name);
-        const char* val = std::getenv(n.c_str());
+        auto n = std::string(name);
+        const char *val = std::getenv(n.c_str());
         if (!val)
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::string(val));
@@ -74,7 +75,7 @@ namespace pjh::platform
         -> pjh::result::Result<void, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
-        auto wname  = Encoding::to_wide(name);
+        auto wname = Encoding::to_wide(name);
         auto wvalue = Encoding::to_wide(value);
         if (!SetEnvironmentVariableW(wname.c_str(), wvalue.c_str()))
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
@@ -88,8 +89,7 @@ namespace pjh::platform
 #endif
     }
 
-    auto Env::unset(std::string_view name)
-        -> pjh::result::Result<void, ErrorCode>
+    auto Env::unset(std::string_view name) -> pjh::result::Result<void, ErrorCode>
     {
 #if PJH_PLATFORM_WINDOWS
         auto wname = Encoding::to_wide(name);
@@ -104,24 +104,20 @@ namespace pjh::platform
 #endif
     }
 
-    auto Env::snapshot()
-        -> std::unordered_map<std::string, std::string>
+    auto Env::snapshot() -> std::unordered_map<std::string, std::string>
     {
         std::unordered_map<std::string, std::string> m;
-        for_each_env_entry([&](auto&& k, auto&& v) {
-            m.emplace(std::move(k), std::move(v));
-        });
+        for_each_env_entry([&](auto &&k, auto &&v)
+                           { m.emplace(std::move(k), std::move(v)); });
         return m;
     }
 
-    auto Env::list()
-        -> std::vector<std::pair<std::string, std::string>>
+    auto Env::list() -> std::vector<std::pair<std::string, std::string>>
     {
         std::vector<std::pair<std::string, std::string>> result;
-        for_each_env_entry([&](auto&& k, auto&& v) {
-            result.emplace_back(std::move(k), std::move(v));
-        });
+        for_each_env_entry([&](auto &&k, auto &&v)
+                           { result.emplace_back(std::move(k), std::move(v)); });
         return result;
     }
 
-} // namespace pjh::platform
+}  // namespace pjh::platform

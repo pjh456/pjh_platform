@@ -2,7 +2,6 @@
 
 #include <bit>
 #include <iostream>
-
 #include <pjh_platform/os.hpp>
 
 using pjh::platform::Os;
@@ -10,9 +9,12 @@ using pjh::platform::Os;
 TEST_CASE("Os::is_* constants — exactly one OS is detected")
 {
     int count = 0;
-    if constexpr (Os::is_windows) ++count;
-    if constexpr (Os::is_linux)   ++count;
-    if constexpr (Os::is_macos)   ++count;
+    if constexpr (Os::is_windows)
+        ++count;
+    if constexpr (Os::is_linux)
+        ++count;
+    if constexpr (Os::is_macos)
+        ++count;
     CHECK_EQ(count, 1);
 
     if constexpr (Os::is_windows)
@@ -23,7 +25,7 @@ TEST_CASE("Os::is_* constants — exactly one OS is detected")
 
 TEST_CASE("Os::is_64bit matches pointer width")
 {
-    CHECK_EQ(Os::is_64bit, sizeof(void*) == 8);
+    CHECK_EQ(Os::is_64bit, sizeof(void *) == 8);
 }
 
 TEST_CASE("Os::arch_name is a known value")
@@ -65,10 +67,10 @@ TEST_CASE("Os::path_list_separator")
 
 TEST_CASE("Os constants are usable in constexpr contexts")
 {
-    constexpr auto sep   = Os::path_separator;
-    constexpr auto lsep  = Os::path_list_separator;
-    constexpr auto os    = Os::name();
-    constexpr auto arch  = Os::arch_name;
+    constexpr auto sep = Os::path_separator;
+    constexpr auto lsep = Os::path_list_separator;
+    constexpr auto os = Os::name();
+    constexpr auto arch = Os::arch_name;
 
     CHECK(!os.empty());
     CHECK(!arch.empty());

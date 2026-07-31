@@ -53,7 +53,7 @@ TEST_CASE("Env::list returns all environment variables")
     CHECK_GE(entries.size(), 1);
 
     bool found = false;
-    for (const auto& [key, val] : entries)
+    for (const auto &[key, val] : entries)
     {
         if (key == "__TEST_PJH_LIST__")
         {

@@ -1,9 +1,8 @@
 #ifndef INCLUDE_PJH_PLATFORM_OS_HPP
 #define INCLUDE_PJH_PLATFORM_OS_HPP
 
-#include <pjh_platform/platform.hpp>
-
 #include <bit>
+#include <pjh_platform/platform.hpp>
 #include <string_view>
 
 namespace pjh::platform
@@ -29,29 +28,29 @@ namespace pjh::platform
         /// @brief True when the target is Windows.
         static constexpr bool is_windows = true;
         /// @brief True when the target is Linux.
-        static constexpr bool is_linux   = false;
+        static constexpr bool is_linux = false;
         /// @brief True when the target is macOS.
-        static constexpr bool is_macos   = false;
+        static constexpr bool is_macos = false;
         /// @brief True when the target is a POSIX platform.
-        static constexpr bool is_posix   = false;
+        static constexpr bool is_posix = false;
 #elif defined(PJH_PLATFORM_MACOS)
         /// @brief True when the target is Windows.
         static constexpr bool is_windows = false;
         /// @brief True when the target is Linux.
-        static constexpr bool is_linux   = false;
+        static constexpr bool is_linux = false;
         /// @brief True when the target is macOS.
-        static constexpr bool is_macos   = true;
+        static constexpr bool is_macos = true;
         /// @brief True when the target is a POSIX platform.
-        static constexpr bool is_posix   = true;
+        static constexpr bool is_posix = true;
 #else
         /// @brief True when the target is Windows.
         static constexpr bool is_windows = false;
         /// @brief True when the target is Linux.
-        static constexpr bool is_linux   = true;
+        static constexpr bool is_linux = true;
         /// @brief True when the target is macOS.
-        static constexpr bool is_macos   = false;
+        static constexpr bool is_macos = false;
         /// @brief True when the target is a POSIX platform.
-        static constexpr bool is_posix   = true;
+        static constexpr bool is_posix = true;
 #endif
 
         /**
@@ -61,7 +60,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static constexpr bool is_64bit = sizeof(void*) == 8;
+        static constexpr bool is_64bit = sizeof(void *) == 8;
 
         // ── Architecture ───────────────────────────────────────────────────
 
@@ -83,11 +82,11 @@ namespace pjh::platform
 #elif defined(__arm__) || defined(_M_ARM)
         static constexpr std::string_view arch_name = "arm";
 #elif defined(__riscv)
-        #if __riscv_xlen == 64
+#if __riscv_xlen == 64
         static constexpr std::string_view arch_name = "riscv64";
-        #else
+#else
         static constexpr std::string_view arch_name = "riscv32";
-        #endif
+#endif
 #else
         static constexpr std::string_view arch_name = "unknown";
 #endif
@@ -149,6 +148,6 @@ namespace pjh::platform
         static constexpr std::string_view path_list_separator = is_windows ? ";" : ":";
     };
 
-} // namespace pjh::platform
+}  // namespace pjh::platform
 
-#endif // INCLUDE_PJH_PLATFORM_OS_HPP
+#endif  // INCLUDE_PJH_PLATFORM_OS_HPP

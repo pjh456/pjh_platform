@@ -1,7 +1,6 @@
 #include <doctest/doctest.h>
 
 #include <iostream>
-
 #include <pjh_platform/platform.hpp>
 
 // ── Platform detection compilation tests ────────────────────────────────
