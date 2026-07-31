@@ -34,8 +34,8 @@ namespace pjh::platform
                         DWORD bytes = 0;
                         ULONG_PTR key = 0;
                         OVERLAPPED *ov = nullptr;
-                        BOOL ok = GetQueuedCompletionStatus(
-                            impl.port, &bytes, &key, &ov, 0);
+                        BOOL ok =
+                            GetQueuedCompletionStatus(impl.port, &bytes, &key, &ov, 0);
                         if (!ok)
                             break;
                         if (key == reinterpret_cast<ULONG_PTR>(&entry))
@@ -58,8 +58,7 @@ namespace pjh::platform
             entry.fd_to_dir.clear();
             entry.fd_to_file.clear();
 #else
-            for (auto &[wd, unused] : entry.wd_to_path)
-                ::inotify_rm_watch(impl.fd, wd);
+            for (auto &[wd, unused] : entry.wd_to_path) ::inotify_rm_watch(impl.fd, wd);
             entry.wd_to_path.clear();
             entry.root_wd = -1;
 #endif
@@ -76,10 +75,11 @@ namespace pjh::platform
         auto abs = detail::make_absolute(path);
         if (abs.is_err())
             return pjh::result::Failure<ErrorCode>{abs.unwrap_err()};
+        auto absolute = std::move(abs).unwrap();
 
         for (auto it = impl.entries.begin(); it != impl.entries.end(); ++it)
         {
-            if ((*it)->path == abs.unwrap())
+            if ((*it)->path == absolute)
             {
                 detail::unregister_watch(impl, **it);
                 impl.entries.erase(it);
