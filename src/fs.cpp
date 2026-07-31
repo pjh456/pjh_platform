@@ -305,6 +305,61 @@ namespace pjh::platform
 #endif
     }
 
+    auto Fs::copy_file(
+        const std::filesystem::path &from,
+        const std::filesystem::path &to,
+        bool overwrite) -> pjh::result::Result<void, ErrorCode>
+    {
+        std::error_code ec;
+        std::filesystem::copy_file(
+            from, to,
+            overwrite ? std::filesystem::copy_options::overwrite_existing
+                      : std::filesystem::copy_options::none,
+            ec);
+        if (ec)
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+        return pjh::result::Result<void, ErrorCode>::Ok();
+    }
+
+    auto Fs::copy_directory(
+        const std::filesystem::path &from,
+        const std::filesystem::path &to,
+        bool overwrite) -> pjh::result::Result<void, ErrorCode>
+    {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(from, ec))
+        {
+            if (ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+        }
+
+        std::filesystem::create_directories(to, ec);
+        if (ec)
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+
+        auto options = overwrite ? std::filesystem::copy_options::overwrite_existing
+                                 : std::filesystem::copy_options::none;
+        std::filesystem::recursive_directory_iterator it(
+            from, std::filesystem::directory_options::skip_permission_denied, ec);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; it != end; ++it)
+        {
+            std::error_code entry_ec;
+            const auto &entry = *it;
+            auto dest = to / entry.path().lexically_relative(from);
+            if (entry.is_directory(entry_ec))
+                std::filesystem::create_directories(dest, entry_ec);
+            else
+                std::filesystem::copy_file(entry.path(), dest, options, entry_ec);
+            if (entry_ec)
+                return pjh::result::Failure<ErrorCode>{map_error_code(entry_ec)};
+        }
+        if (ec)
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+        return pjh::result::Result<void, ErrorCode>::Ok();
+    }
+
     auto Fs::list_directory(const std::filesystem::path &p)
         -> pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>
     {

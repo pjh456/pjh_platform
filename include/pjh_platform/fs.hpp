@@ -216,6 +216,69 @@ namespace pjh::platform
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
+         * @brief Copies the file at @p from to @p to.
+         *
+         * @details Uses `std::filesystem::copy_file`. The parent directory of
+         *          @p to must already exist. When @p overwrite is `false` (the
+         *          default) the copy fails with `AlreadyExists` if @p to
+         *          already exists; when `true` an existing @p to is replaced
+         *          with a byte-for-byte copy of @p from.
+         *
+         * @param from Source file path.
+         * @param to Destination file path.
+         * @param overwrite When `true`, replace an existing @p to instead of
+         *                  failing.
+         *
+         * @return `Ok()` on success; `Failure(NotFound)` if @p from does not
+         *         exist, `Failure(AlreadyExists)` if @p to exists and @p
+         *         overwrite is `false`, `Failure(PermissionDenied)` on access
+         *         errors, or other mapped errors otherwise.
+         *
+         * @exception Never throws.
+         *
+         * @sideeffect Creates or replaces the file at @p to.
+         *
+         * @platform All supported platforms.
+         */
+        static auto copy_file(
+            const std::filesystem::path &from,
+            const std::filesystem::path &to,
+            bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
+
+        /**
+         * @brief Recursively copies the directory tree at @p from to @p to.
+         *
+         * @details Creates @p to (including all missing parents) if it does not
+         *          already exist, then copies every file and directory under
+         *          @p from into it, preserving the relative layout. Directory
+         *          symlinks are not followed. When @p overwrite is `false` (the
+         *          default) the operation fails with `AlreadyExists` if any
+         *          destination file already exists; when `true` existing
+         *          destination files are replaced.
+         *
+         * @param from Source directory path.
+         * @param to Destination directory path.
+         * @param overwrite When `true`, replace existing destination files
+         *                  instead of failing.
+         *
+         * @return `Ok()` on success; `Failure(InvalidArgument)` if @p from is
+         *         not a directory, `Failure(NotFound)` if @p from does not
+         *         exist, `Failure(AlreadyExists)` if a destination file exists
+         *         and @p overwrite is `false`, `Failure(PermissionDenied)` on
+         *         access errors, or other mapped errors otherwise.
+         *
+         * @exception Never throws.
+         *
+         * @sideeffect Creates directories and copies files under @p to.
+         *
+         * @platform All supported platforms.
+         */
+        static auto copy_directory(
+            const std::filesystem::path &from,
+            const std::filesystem::path &to,
+            bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
+
+        /**
          * @brief Returns the immediate entries of directory @p p (non-recursive).
          *
          * @details Uses `std::filesystem::directory_iterator` with an

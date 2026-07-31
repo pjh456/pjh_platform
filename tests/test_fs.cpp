@@ -48,6 +48,149 @@ TEST_CASE("Fs::read_file returns not_found for non-existent file")
     CHECK(content.is_err());
 }
 
+TEST_CASE("Fs::copy_file copies file contents")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_src.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dst.txt";
+    std::string_view content = "copy me please";
+    REQUIRE(Fs::write_file(src, content).is_ok());
+
+    auto r = Fs::copy_file(src, dst);
+    REQUIRE(r.is_ok());
+
+    auto read = Fs::read_file(dst);
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), content);
+
+    std::filesystem::remove(src);
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::copy_file fails when destination exists without overwrite")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_src2.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dst2.txt";
+    REQUIRE(Fs::write_file(src, "src").is_ok());
+    REQUIRE(Fs::write_file(dst, "dst").is_ok());
+
+    auto r = Fs::copy_file(src, dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::AlreadyExists);
+
+    std::filesystem::remove(src);
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::copy_file overwrites existing destination")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_src3.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dst3.txt";
+    REQUIRE(Fs::write_file(src, "new content").is_ok());
+    REQUIRE(Fs::write_file(dst, "old content").is_ok());
+
+    auto r = Fs::copy_file(src, dst, true);
+    REQUIRE(r.is_ok());
+
+    auto read = Fs::read_file(dst);
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "new content");
+
+    std::filesystem::remove(src);
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::copy_file returns NotFound for non-existent source")
+{
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_missing_dst.txt";
+    auto r = Fs::copy_file("/nonexistent_path_12345", dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::NotFound);
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::copy_directory copies directory tree recursively")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_dir_src";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dir_dst";
+    std::filesystem::create_directories(src / "sub");
+    REQUIRE(Fs::write_file(src / "a.txt", "aaa").is_ok());
+    REQUIRE(Fs::write_file(src / "sub" / "b.txt", "bbb").is_ok());
+
+    auto r = Fs::copy_directory(src, dst);
+    REQUIRE(r.is_ok());
+
+    CHECK(Fs::exists(dst / "a.txt"));
+    CHECK(Fs::is_directory(dst / "sub"));
+    auto read = Fs::read_file(dst / "sub" / "b.txt");
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "bbb");
+
+    std::filesystem::remove_all(src);
+    std::filesystem::remove_all(dst);
+}
+
+TEST_CASE("Fs::copy_directory fails when destination file exists without overwrite")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_dir_src2";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dir_dst2";
+    std::filesystem::create_directories(src);
+    REQUIRE(Fs::write_file(src / "a.txt", "aaa").is_ok());
+    std::filesystem::create_directories(dst);
+    REQUIRE(Fs::write_file(dst / "a.txt", "existing").is_ok());
+
+    auto r = Fs::copy_directory(src, dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::AlreadyExists);
+
+    std::filesystem::remove_all(src);
+    std::filesystem::remove_all(dst);
+}
+
+TEST_CASE("Fs::copy_directory overwrites existing files")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_dir_src3";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dir_dst3";
+    std::filesystem::create_directories(src);
+    REQUIRE(Fs::write_file(src / "a.txt", "new").is_ok());
+    std::filesystem::create_directories(dst);
+    REQUIRE(Fs::write_file(dst / "a.txt", "old").is_ok());
+
+    auto r = Fs::copy_directory(src, dst, true);
+    REQUIRE(r.is_ok());
+
+    auto read = Fs::read_file(dst / "a.txt");
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "new");
+
+    std::filesystem::remove_all(src);
+    std::filesystem::remove_all(dst);
+}
+
+TEST_CASE("Fs::copy_directory returns NotFound for non-existent source")
+{
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dir_missing_dst";
+    auto r = Fs::copy_directory("/nonexistent_path_12345", dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::NotFound);
+
+    std::filesystem::remove_all(dst);
+}
+
+TEST_CASE("Fs::copy_directory returns InvalidArgument when source is a file")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_copy_dir_file_src";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_copy_dir_file_dst";
+    REQUIRE(Fs::write_file(src, "not a dir").is_ok());
+
+    auto r = Fs::copy_directory(src, dst);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
+
+    std::filesystem::remove(src);
+    std::filesystem::remove_all(dst);
+}
+
 TEST_CASE("Fs::home_directory returns something on typical systems")
 {
     auto home = Fs::home_directory();
