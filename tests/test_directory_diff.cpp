@@ -158,6 +158,15 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
     REQUIRE(before.is_ok());
 
     REQUIRE(pjh::platform::Fs::write_file(p / "sub" / "inner.txt", "x").is_ok());
+
+    // Not every platform bumps a directory's mtime when a child is added
+    // (Windows keeps directory last-write-time lazily), so touch it explicitly
+    // to guarantee the setup below exercises a changed directory mtime.
+    std::error_code ec;
+    std::filesystem::last_write_time(
+        p / "sub", std::filesystem::file_time_type::clock::now(), ec);
+    REQUIRE_FALSE(ec);
+
     auto after = DirectorySnapshot::capture(p);
     REQUIRE(after.is_ok());
 
