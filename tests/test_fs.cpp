@@ -159,32 +159,29 @@ TEST_CASE("Fs::list_directory returns NotFound for non-existent path")
 
 TEST_CASE("Fs::normalize collapses dot and dot-dot elements")
 {
-    using pjh::platform::ErrorCode;
-    auto sep = std::filesystem::path::preferred_separator;
-
     CHECK_EQ(
-        Fs::normalize(std::filesystem::path("a/./b/../c")).string(),
-        std::filesystem::path("a/c").string());
+        Fs::normalize(std::filesystem::path("a/./b/../c")).generic_string(),
+        std::filesystem::path("a/c").generic_string());
     CHECK_EQ(
-        Fs::normalize(std::filesystem::path("a//b///c")).string(),
-        std::filesystem::path("a/b/c").string());
+        Fs::normalize(std::filesystem::path("a//b///c")).generic_string(),
+        std::filesystem::path("a/b/c").generic_string());
     CHECK_EQ(
-        Fs::normalize(std::filesystem::path("../../a/./b")).string(),
-        std::filesystem::path("../../a/b").string());
+        Fs::normalize(std::filesystem::path("../../a/./b")).generic_string(),
+        std::filesystem::path("../../a/b").generic_string());
     CHECK_EQ(
-        Fs::normalize(std::filesystem::path("./")).string(),
-        std::filesystem::path(".").string());
+        Fs::normalize(std::filesystem::path("./")).generic_string(),
+        std::filesystem::path(".").generic_string());
     CHECK_EQ(
-        Fs::normalize(std::filesystem::path("")).string(),
-        std::filesystem::path("").string());
+        Fs::normalize(std::filesystem::path("")).generic_string(),
+        std::filesystem::path("").generic_string());
     if (pjh::platform::Os::is_windows)
         CHECK_EQ(
-            Fs::normalize(std::filesystem::path("C:\\a\\..")).string(),
-            std::filesystem::path("C:").string());
+            Fs::normalize(std::filesystem::path("C:\\a\\..")).generic_string(),
+            std::filesystem::path("C:\\").generic_string());
     else
         CHECK_EQ(
-            Fs::normalize(std::filesystem::path("/a/..")).string(),
-            std::filesystem::path("/").string());
+            Fs::normalize(std::filesystem::path("/a/..")).generic_string(),
+            std::filesystem::path("/").generic_string());
 }
 
 TEST_CASE("Fs::join concatenates parts with platform separator")
@@ -226,15 +223,15 @@ TEST_CASE("Fs::relative computes relative path lexically")
 {
     auto r = Fs::relative(std::filesystem::path("a/b"), std::filesystem::path("a/b/c/d"));
     REQUIRE(r.is_ok());
-    CHECK_EQ(r.unwrap().string(), std::filesystem::path("c/d").string());
+    CHECK_EQ(r.unwrap().generic_string(), std::filesystem::path("c/d").generic_string());
 
     auto up = Fs::relative(std::filesystem::path("a/b/c"), std::filesystem::path("a/b"));
     REQUIRE(up.is_ok());
-    CHECK_EQ(up.unwrap().string(), std::filesystem::path("..").string());
+    CHECK_EQ(up.unwrap().generic_string(), std::filesystem::path("..").generic_string());
 
     auto same = Fs::relative(std::filesystem::path("a/b"), std::filesystem::path("a/b"));
     REQUIRE(same.is_ok());
-    CHECK_EQ(same.unwrap().string(), std::filesystem::path(".").string());
+    CHECK_EQ(same.unwrap().generic_string(), std::filesystem::path(".").generic_string());
 }
 
 TEST_CASE("Fs::relative handles non-existent and unnormalized paths")
@@ -242,13 +239,23 @@ TEST_CASE("Fs::relative handles non-existent and unnormalized paths")
     auto r =
         Fs::relative(std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
     REQUIRE(r.is_ok());
-    CHECK_EQ(r.unwrap().string(), std::filesystem::path("c").string());
+    CHECK_EQ(r.unwrap().generic_string(), std::filesystem::path("c").generic_string());
 }
 
 TEST_CASE("Fs::relative fails when paths share no common root")
 {
-    auto r = Fs::relative(
-        std::filesystem::path("relative"), std::filesystem::path("/absolute"));
-    CHECK(r.is_err());
-    CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
+    if (pjh::platform::Os::is_windows)
+    {
+        auto r = Fs::relative(
+            std::filesystem::path("C:\\dir"), std::filesystem::path("D:\\dir\\file"));
+        CHECK(r.is_err());
+        CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
+    }
+    else
+    {
+        auto r = Fs::relative(
+            std::filesystem::path("relative"), std::filesystem::path("/absolute"));
+        CHECK(r.is_err());
+        CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
+    }
 }
