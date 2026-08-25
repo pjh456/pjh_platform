@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(pjh_platform LANGUAGES CXX)
 
-add_subdirectory(thirdparty/pjh_result EXCLUDE_FROM_ALL)
+if(NOT TARGET pjh_result)
+    add_subdirectory(thirdparty/pjh_result EXCLUDE_FROM_ALL)
+endif()
 
 add_library(pjh_platform)
 target_sources(pjh_platform
