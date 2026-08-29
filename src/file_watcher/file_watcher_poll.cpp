@@ -82,10 +82,13 @@ namespace pjh::platform
                             continue;
                         emit_if_new(out, to_kind(ch.m_kind), ch.m_full_path);
                     }
-                    // A directory reported as Created is a brand-new subtree;
-                    // establish its baseline right away so changes inside it
-                    // are diffed against a pre-children snapshot instead of
-                    // being swallowed into its first baseline.
+                    // A directory reported as Created has no baseline yet;
+                    // capture one now so later overflow diffs have a baseline
+                    // to compare against. On the resync path the directory has
+                    // existed since the stale baseline, so this capture is
+                    // post-children: changes made inside it before the capture
+                    // are absorbed into this first baseline and are not
+                    // re-reported.
                     for (const auto &ch : diff.changes())
                     {
                         if (ch.m_kind != DirectoryDiff::ChangeKind::Created)
