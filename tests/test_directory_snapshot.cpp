@@ -210,6 +210,13 @@ TEST_CASE("DirectorySnapshot hashes same content equally")
 
 TEST_CASE("DirectorySnapshot captures last-write times and sizes")
 {
+    // Tolerance for comparing two independent stdlib last_write_time reads on
+    // the same file: the value a filesystem reports can legitimately move by up
+    // to one timestamp quantum between the reads (FAT 2 s, exFAT 1 s, NTFS 100 ns)
+    // plus Windows lazy mtime update latency. 2 s covers the worst supported
+    // quantum. Size stays exact.
+    constexpr std::intmax_t kMtimeToleranceNs = 2'000'000'000;
+
     auto p = make_test_dir();
     REQUIRE(pjh::platform::Fs::write_file(p / "data.bin", "0123456789").is_ok());
 
@@ -225,7 +232,25 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     auto entry = snap.get("data.bin");
     REQUIRE(entry.has_value());
     CHECK_EQ(entry->m_file_size, 10u);
-    CHECK_EQ(entry->m_mtime_ns, expected_ns);
+    CHECK(std::abs(entry->m_mtime_ns - expected_ns) <= kMtimeToleranceNs);
+
+    // A real write must observably move the mtime: a second, different-size
+    // write, a fresh ground-truth read, and a second capture. Guards against
+    // stale or foreign mtimes slipping through the tolerance above.
+    REQUIRE(pjh::platform::Fs::write_file(p / "data.bin", "0123456789AB").is_ok());
+    auto mtime2 = std::filesystem::last_write_time(p / "data.bin", ec);
+    REQUIRE_FALSE(ec);
+    auto expected_ns2 =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(mtime2.time_since_epoch()).count();
+
+    auto r2 = DirectorySnapshot::capture(p);
+    REQUIRE(r2.is_ok());
+    auto snap2 = std::move(r2).unwrap();
+    auto entry2 = snap2.get("data.bin");
+    REQUIRE(entry2.has_value());
+    CHECK_EQ(entry2->m_file_size, 12u);
+    CHECK(std::abs(entry2->m_mtime_ns - expected_ns2) <= kMtimeToleranceNs);
+    CHECK(entry2->m_mtime_ns >= expected_ns - kMtimeToleranceNs);
 }
 
 namespace
