@@ -1,12 +1,18 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <iomanip>
+#include <iostream>
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -270,4 +276,140 @@ TEST_CASE("DirectorySnapshot reports PermissionDenied for an unreadable director
     REQUIRE(r.is_err());
     CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);
 #endif
+}
+
+namespace
+{
+    // Deterministic pseudo-random fill (xorshift64) so every run hashes the
+    // same bytes; expected vectors below were generated independently in
+    // Python against the same rule.
+    void fill_pattern(std::size_t n, std::vector<std::uint8_t> *out)
+    {
+        out->resize(n);
+        std::uint64_t state = 0x9E3779B97F4A7C15ULL;
+        for (auto &b : *out)
+        {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            b = static_cast<std::uint8_t>(state & 0xFFU);
+        }
+    }
+
+    auto write_pattern_file(const std::filesystem::path &path, std::size_t n) -> bool
+    {
+        std::vector<std::uint8_t> pattern;
+        fill_pattern(n, &pattern);
+        return pjh::platform::Fs::write_file(
+                   path, std::string_view(reinterpret_cast<const char *>(pattern.data()), n))
+            .is_ok();
+    }
+}  // namespace
+
+TEST_CASE("Fnv1a64Hasher matches known FNV-1a 64-bit vectors")
+{
+    auto p = make_test_dir();
+
+    struct V
+    {
+        const char *name;
+        std::uint64_t n;
+        std::uint64_t expected;
+    };
+    // The first three are the canonical FNV-1a 64-bit vectors from the FNV
+    // specification; the pattern files exercise 8-byte chunk boundaries and
+    // the tail (8 = one full chunk, 9 = chunk + one tail byte).
+    const V vectors[] = {
+        {"empty.bin", 0, 0xcbf29ce484222325ULL},
+        {"a.bin", 1, 0xaf63dc4c8601ec8cULL},
+        {"foobar.bin", 6, 0x85944171f73967e8ULL},
+        {"pat8.bin", 8, 0x67fefdd5a8579d36ULL},
+        {"pat9.bin", 9, 0x0de70f0d0ce10827ULL},
+        {"pat1000.bin", 1000, 0xab06f176b84e76d3ULL},
+        {"pat65539.bin", 65539, 0xd1a1b8d872d3fb5dULL},
+        {"pat1mib.bin", 1048576, 0xf0feed127f45c95dULL},
+    };
+
+    Fnv1a64Hasher hasher;
+    for (const auto &v : vectors)
+    {
+        auto path = p / v.name;
+        if (v.n == 1)
+            REQUIRE(pjh::platform::Fs::write_file(path, "a").is_ok());
+        else if (v.n == 6)
+            REQUIRE(pjh::platform::Fs::write_file(path, "foobar").is_ok());
+        else
+            REQUIRE(write_pattern_file(path, v.n));
+        auto h = hasher(path);
+        REQUIRE(h.has_value());
+        CHECK_EQ(*h, v.expected);
+    }
+}
+
+TEST_CASE("Fnv1a64Hasher benchmark gated by PJH_HASH_BENCH_BYTES")
+{
+    // Baseline / regression benchmark for Fnv1a64Hasher. The measurement and
+    // its stdout output happen only when PJH_HASH_BENCH_BYTES names the file
+    // size to use; a plain `ctest` run is a no-op and stays silent.
+    const char *raw = std::getenv("PJH_HASH_BENCH_BYTES");
+    if (raw == nullptr)
+        return;
+    const auto bytes = static_cast<std::size_t>(std::strtoull(raw, nullptr, 10));
+    REQUIRE(bytes >= 8u * 1024u);
+
+    auto p = make_test_dir();
+    REQUIRE(write_pattern_file(p / "bench.bin", bytes));
+
+    Fnv1a64Hasher hasher;
+    (void)hasher(p / "bench.bin");  // warm-up
+
+    const int iters = 3;
+    auto t0 = std::chrono::steady_clock::now();
+    FileHash last = 0;
+    for (int i = 0; i < iters; ++i)
+    {
+        auto h = hasher(p / "bench.bin");
+        REQUIRE(h.has_value());
+        last = *h;
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    const auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    const double mb_per_s =
+        static_cast<double>(bytes) / (static_cast<double>(total_us) * 1e-6) / (1024.0 * 1024.0);
+    std::cout << "hash-bench single-file: bytes=" << bytes << " iters=" << iters
+              << " total_us=" << total_us << " us_per_run=" << total_us / iters
+              << " mb_per_s=" << std::fixed << std::setprecision(1) << mb_per_s << " last_hash=0x"
+              << std::hex << last << std::dec << "\n";
+
+    // Multi-file: a fixed 4 MiB total as 16 KiB files (independent of the
+    // single-file size above), hashed through DirectorySnapshot::capture —
+    // the realistic snapshot path.
+    const std::size_t file_size = 16 * 1024;
+    const std::size_t multi_total = 4 * 1024 * 1024;
+    auto subdir = p / "multi";
+    REQUIRE(std::filesystem::create_directories(subdir));
+    std::size_t written = 0;
+    int files = 0;
+    while (written + file_size <= multi_total)
+    {
+        REQUIRE(write_pattern_file(subdir / ("f" + std::to_string(files) + ".bin"), file_size));
+        written += file_size;
+        ++files;
+    }
+    REQUIRE(files > 0);
+    (void)DirectorySnapshot::capture(subdir, nullptr);  // warm-up
+
+    auto m0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < iters; ++i)
+    {
+        auto r = DirectorySnapshot::capture(subdir, nullptr);
+        REQUIRE(r.is_ok());
+    }
+    auto m1 = std::chrono::steady_clock::now();
+    const auto mtotal_us = std::chrono::duration_cast<std::chrono::microseconds>(m1 - m0).count();
+    const double mmb_per_s =
+        static_cast<double>(written) / (static_cast<double>(mtotal_us) * 1e-6) / (1024.0 * 1024.0);
+    std::cout << "hash-bench multi-file: files=" << files << " bytes=" << written
+              << " iters=" << iters << " total_us=" << mtotal_us
+              << " us_per_run=" << mtotal_us / iters << " mb_per_s=" << mmb_per_s << "\n";
 }

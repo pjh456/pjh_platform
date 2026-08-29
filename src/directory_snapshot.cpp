@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <fstream>
+#include <cstdio>
 #include <iterator>
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/platform.hpp>
@@ -70,30 +70,82 @@ namespace pjh::platform
 
             return ErrorCode::Unknown;
         }
+
+        // FNV-1a 64-bit: offset basis and prime (FNV spec).
+        constexpr std::uint64_t kFnv1a64OffsetBasis = 0xcbf29ce484222325ULL;
+        constexpr std::uint64_t kFnv1a64Prime = 0x00000100000001b3ULL;
+
+        /**
+         * @brief Folds the bytes of @p data into a running FNV-1a 64-bit @p hash.
+         *
+         * @details Unrolled 8 bytes per round: each round feeds 8 bytes to the
+         *          state in file order, bit-identical to the classic per-byte
+         *          FNV-1a loop, with one loop branch per 8 bytes instead of per
+         *          byte. The bytes are consumed directly (never reinterpreted
+         *          as a wider integer), so the result is
+         *          endianness-independent.
+         */
+        auto fnv1a64_update(std::uint64_t &hash, const void *data, std::size_t size) -> void
+        {
+            const auto *bytes = static_cast<const std::uint8_t *>(data);
+            const auto full = size - (size % 8);
+            std::size_t i = 0;
+            for (; i < full; i += 8)
+            {
+                hash ^= bytes[i];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 1];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 2];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 3];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 4];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 5];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 6];
+                hash *= kFnv1a64Prime;
+                hash ^= bytes[i + 7];
+                hash *= kFnv1a64Prime;
+            }
+            for (; i < size; ++i)
+            {
+                hash ^= bytes[i];
+                hash *= kFnv1a64Prime;
+            }
+        }
     }  // namespace
 
     auto Fnv1a64Hasher::operator()(const std::filesystem::path &path) const
         -> std::optional<FileHash>
     {
-        std::ifstream in(path, std::ios::binary);
-        if (!in)
+        // stdio into a fixed 64 KiB buffer: no per-hash heap allocation and no
+        // stream layer (no std::ifstream).
+#if PJH_PLATFORM_WINDOWS
+        std::FILE *in = ::_wfopen(path.c_str(), L"rb");
+#else
+        std::FILE *in = std::fopen(path.c_str(), "rb");
+#endif
+        if (in == nullptr)
             return std::nullopt;
 
-        std::uint64_t hash = 0xcbf29ce484222325ULL;
+        auto hash = kFnv1a64OffsetBasis;
         char buf[64 * 1024];
-        while (in)
+        bool failed = false;
+        for (;;)
         {
-            in.read(buf, static_cast<std::streamsize>(sizeof(buf)));
-            std::streamsize got = in.gcount();
-            if (got <= 0)
-                break;
-            for (std::streamsize i = 0; i < got; ++i)
+            auto got = std::fread(buf, 1, sizeof(buf), in);
+            if (got > 0)
+                fnv1a64_update(hash, buf, static_cast<std::size_t>(got));
+            if (got < sizeof(buf))
             {
-                hash ^= static_cast<unsigned char>(buf[i]);
-                hash *= 0x100000001b3ULL;
+                failed = std::ferror(in);
+                break;
             }
         }
-        if (!in.eof())
+        std::fclose(in);
+        if (failed)
             return std::nullopt;
         return hash;
     }
