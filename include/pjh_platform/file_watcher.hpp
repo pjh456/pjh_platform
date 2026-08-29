@@ -113,6 +113,9 @@ namespace pjh::platform
         /// @brief Move assignment; releases the current resources and takes the
         ///        others.
         ///
+        /// @details The moved-from watcher is left without resources: `add`/`poll`/
+        ///          `remove` return `Failure(InvalidArgument)`; `close` is a no-op.
+        ///
         /// @exception Never throws.
         FileWatcher &operator=(FileWatcher &&) noexcept;
 

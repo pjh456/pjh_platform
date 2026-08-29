@@ -30,7 +30,17 @@ namespace pjh::platform
 
     FileWatcher::FileWatcher(FileWatcher &&) noexcept = default;
 
-    FileWatcher &FileWatcher::operator=(FileWatcher &&) noexcept = default;
+    FileWatcher &FileWatcher::operator=(FileWatcher &&other) noexcept
+    {
+        if (this == &other)
+            return *this;
+        // The defaulted assignment destroyed the previous implementation
+        // without close(), leaking its platform resources; tear it down
+        // through the same path the destructor uses.
+        close();
+        impl_ = std::move(other.impl_);
+        return *this;
+    }
 
     void FileWatcher::close()
     {

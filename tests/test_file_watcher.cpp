@@ -382,6 +382,58 @@ TEST_CASE("FileWatcher move transfers the watch")
     CHECK(has_event(events, FileEventKind::Created, file));
 }
 
+TEST_CASE("FileWatcher move-assignment into a live watcher takes the other's watches")
+{
+    auto p = make_test_dir();
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    auto before = p / "before.txt";
+    REQUIRE(pjh::platform::Fs::write_file(before, "x").is_ok());
+    collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, before); });
+
+    FileWatcher w2;
+    REQUIRE(w2.add(p, false).is_ok());
+    w = std::move(w2);  // w's own watch must be released, not destroyed
+
+    auto after = p / "after.txt";
+    REQUIRE(pjh::platform::Fs::write_file(after, "y").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, after); });
+    CHECK(has_event(events, FileEventKind::Created, after));
+
+    // The moved-from watcher is dead by contract: poll/remove fail with
+    // InvalidArgument, close() is a no-op, and the destructor is safe.
+    auto r = w2.poll(std::chrono::milliseconds(10));
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);
+    CHECK(w2.remove(p).is_err());
+    w2.close();
+    CHECK(w2.poll(std::chrono::milliseconds(10)).is_err());
+}
+
+TEST_CASE("FileWatcher add on a moved-from watcher fails with InvalidArgument")
+{
+    auto p = make_test_dir();
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    FileWatcher w2;
+    w2 = std::move(w);  // w is moved-from; the watch now lives in w2
+
+    auto r = w.add(p, false);
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);
+
+    // The destination keeps the live watch.
+    auto f = p / "dst.txt";
+    REQUIRE(pjh::platform::Fs::write_file(f, "x").is_ok());
+    auto events = collect_until(
+        w2, [&](const auto &all) { return has_event(all, FileEventKind::Created, f); });
+    CHECK(has_event(events, FileEventKind::Created, f));
+}
+
 #if PJH_PLATFORM_WINDOWS
 TEST_CASE("FileWatcher remove of one watch leaves the other watch active")
 {
@@ -669,6 +721,51 @@ TEST_CASE("FileWatcher close releases shared watches without error")
     w.close();
     w.close();
     CHECK(w.poll(std::chrono::milliseconds(10)).is_err());
+}
+
+TEST_CASE("FileWatcher move-assignment does not leak the previous inotify instance")
+{
+    auto p = make_test_dir();
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    // Every FileWatcher owns exactly one inotify instance fd, visible in
+    // /proc/self/fd. Each move-assignment must tear the target's instance
+    // down through close() (not the raw destructor), so the process-wide
+    // count of inotify fds stays stable across assignments.
+    auto count_inotify_fds = []() -> int
+    {
+        int n = 0;
+        std::error_code ec;
+        for (const auto &e : std::filesystem::directory_iterator("/proc/self/fd", ec))
+        {
+            std::error_code fec;
+            auto target = std::filesystem::read_symlink(e.path(), fec);
+            if (!fec && target.string().find("inotify") != std::string::npos)
+                ++n;
+        }
+        return n;
+    };
+
+    int before = count_inotify_fds();
+    REQUIRE(before >= 1);  // w's own instance fd must be visible
+
+    FileWatcher t1;
+    w = std::move(t1);
+    FileWatcher t2;
+    w = std::move(t2);
+    FileWatcher t3;
+    w = std::move(t3);
+    int after = count_inotify_fds();
+
+    // Pre-fix, each assignment leaked the target's instance fd (never
+    // closed); post-fix exactly one instance is live in both worlds.
+    CHECK_EQ(after, before);
+
+    // The target is a live watcher in an empty state, not a moved-from one.
+    auto r = w.poll(std::chrono::milliseconds(10));
+    REQUIRE(r.is_ok());
+    CHECK(r.unwrap().empty());
 }
 #endif
 
