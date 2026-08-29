@@ -2,7 +2,7 @@ BasedOnStyle: Google
 BreakBeforeBraces: Allman
 IndentWidth: 4
 UseTab: Never
-ColumnLimit: 90
+ColumnLimit: 100
 AccessModifierOffset: -4
 AlignAfterOpenBracket: AlwaysBreak
 PointerAlignment: Right

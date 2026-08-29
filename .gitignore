@@ -1,3 +1,8 @@
+# Agent
+.w1mer/
+w1mer.yaml
+AGENTS.md
+
 # Build
 build/
 cmake-build-*/
