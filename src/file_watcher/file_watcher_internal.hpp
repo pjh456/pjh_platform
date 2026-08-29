@@ -171,6 +171,17 @@ namespace pjh::platform
             -> pjh::result::Result<void, ErrorCode>;
 
 #if PJH_PLATFORM_WINDOWS
+        /// @brief Whether @p err means the watched path itself is gone (the
+        ///        not-found family plus the in-flight-read report of a removed
+        ///        directory, at completion time or at the
+        ///        GetQueuedCompletionStatus level); the watch cannot recover
+        ///        and is torn down instead of re-issued.
+        [[nodiscard]] auto is_path_gone(DWORD err) -> bool;
+
+        /// @brief Marks the entry's watch dead: clears the pending-read flag
+        ///        and closes its directory handle.
+        auto mark_watch_dead(WatchEntry &entry) -> void;
+
         /// @brief Re-issues the overlapped directory read after its completion
         ///        was consumed (or after the watch was registered).
         /// @return Whether the re-issued read is now in flight.

@@ -548,6 +548,24 @@ namespace pjh::platform
                 if (err == WAIT_TIMEOUT || err == ERROR_OPERATION_ABORTED)
                     return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
                         std::move(out));
+                if (is_path_gone(err))
+                {
+                    // The in-flight read failed at the I/O level (its
+                    // directory was removed), so no completion packet will
+                    // ever arrive; GetQueuedCompletionStatus itself reports
+                    // the raw code, the completion key still identifying the
+                    // watch. Tear the entry down exactly like the
+                    // completion-level path-gone branch and surface NotFound.
+                    for (auto &e : impl.entries)
+                        if (reinterpret_cast<ULONG_PTR>(e.get()) == key)
+                        {
+                            mark_watch_dead(*e);
+                            return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+                        }
+                    // The key identified no live entry (out-parameters are
+                    // unspecified on failure): nothing to tear down, keep the
+                    // generic mapping.
+                }
                 return pjh::result::Failure<ErrorCode>{map_windows_error(err)};
             }
 

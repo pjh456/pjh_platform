@@ -25,37 +25,36 @@ namespace pjh::platform::detail
     }
 
 #if PJH_PLATFORM_WINDOWS
-    namespace
+    // A directory read of a gone path — reported either at completion time
+    // or at the GetQueuedCompletionStatus level (the in-flight request fails
+    // at the I/O level and no completion packet ever arrives) — completes
+    // with one of these codes: the not-found family, plus what an in-flight
+    // read reports when its directory is removed out from under it —
+    // observed ERROR_ACCESS_DENIED on the CI's NTFS runner (the
+    // FILE_SHARE_DELETE handle outlives the directory), ERROR_BROKEN_PIPE
+    // is the stale-handle variant. The watch can never recover; the entry
+    // is torn down, not re-issued.
+    auto is_path_gone(DWORD err) -> bool
     {
-        // A directory read completing with one of these codes means the
-        // watched path itself is gone: the not-found family, plus what an
-        // in-flight read reports when its directory is removed out from
-        // under it — observed ERROR_ACCESS_DENIED on the CI's NTFS runner
-        // (the FILE_SHARE_DELETE handle outlives the directory),
-        // ERROR_BROKEN_PIPE is the stale-handle variant. The watch can
-        // never recover; the entry is torn down, not re-issued.
-        auto is_path_gone(DWORD err) -> bool
+        switch (err)
         {
-            switch (err)
-            {
-            case ERROR_FILE_NOT_FOUND:
-            case ERROR_PATH_NOT_FOUND:
-            case ERROR_ACCESS_DENIED:
-            case ERROR_BROKEN_PIPE:
-                return true;
-            default:
-                return false;
-            }
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND:
+        case ERROR_ACCESS_DENIED:
+        case ERROR_BROKEN_PIPE:
+            return true;
+        default:
+            return false;
         }
+    }
 
-        auto mark_watch_dead(WatchEntry &entry) -> void
+    auto mark_watch_dead(WatchEntry &entry) -> void
+    {
+        entry.io_pending = false;
+        if (entry.handle != INVALID_HANDLE_VALUE)
         {
-            entry.io_pending = false;
-            if (entry.handle != INVALID_HANDLE_VALUE)
-            {
-                CloseHandle(entry.handle);
-                entry.handle = INVALID_HANDLE_VALUE;
-            }
+            CloseHandle(entry.handle);
+            entry.handle = INVALID_HANDLE_VALUE;
         }
     }
 
