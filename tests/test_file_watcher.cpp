@@ -21,8 +21,6 @@
 #include <cstdio>
 #include <fstream>
 #include <set>
-#elif PJH_PLATFORM_WINDOWS
-#include <windows.h>
 #endif
 
 using pjh::platform::ErrorCode;
@@ -521,96 +519,6 @@ TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
     std::filesystem::remove_all(p, ec);
 }
 
-// TEMPORARY DIAGNOSTIC (CI-probe, to be replaced by the evidence-based fix):
-// T2 surfaces ErrorCode 2 (PermissionDenied) although the post-bf62dc0
-// on_read_failed cannot produce it (path-gone codes 2/3/5/109 all map to
-// NotFound now); the only batch-result arm left is poll.cpp's
-// GetQueuedCompletionStatus-false arm mapping GetLastError()==5. This case
-// replays the library's exact Windows sequence with raw handles and prints
-// every raw status so one CI cycle pins which call carries the 5.
-TEST_CASE("FileWatcher Windows raw in-flight read failure probe (temporary diagnostic)")
-{
-    auto p = make_test_dir();
-    auto dir = p / "probe_gone";
-    REQUIRE(std::filesystem::create_directories(dir));
-
-    const DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                         FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-    HANDLE port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
-    std::cerr << "[probe] ctor CreateIoCompletionPort ok=" << (port != nullptr) << "\n";
-    REQUIRE(port != nullptr);
-
-    HANDLE h = CreateFileW(
-        dir.c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
-    std::cerr << "[probe] CreateFileW ok=" << (h != INVALID_HANDLE_VALUE)
-              << " err=" << GetLastError() << "\n";
-    REQUIRE(h != INVALID_HANDLE_VALUE);
-
-    const ULONG_PTR key = 0x1234;
-    HANDLE assoc = CreateIoCompletionPort(h, port, key, 0);
-    std::cerr << "[probe] assoc CreateIoCompletionPort ok=" << (assoc != nullptr)
-              << " same_as_stored=" << (assoc == port) << "\n";
-
-    // One structure per in-flight read, like the library's per-entry
-    // `overlapped`; `cur` tracks the structure the in-flight read was
-    // issued with so GOR always resolves that specific operation.
-    std::vector<unsigned char> buffer(64 * 1024);
-    OVERLAPPED ov{};
-    OVERLAPPED *cur = &ov;
-    BOOL issued = ReadDirectoryChangesW(
-        h, buffer.data(), static_cast<DWORD>(buffer.size()), FALSE, filter, nullptr, cur, nullptr);
-    std::cerr << "[probe] RDCW(issue) ok=" << issued << " err=" << GetLastError() << "\n";
-    REQUIRE(issued == TRUE);
-
-    REQUIRE(std::filesystem::remove_all(dir));
-
-    for (int i = 0; i < 6; ++i)
-    {
-        DWORD bytes = 0;
-        ULONG_PTR gkey = 0;
-        OVERLAPPED *pov = nullptr;
-        BOOL ok = GetQueuedCompletionStatus(port, &bytes, &gkey, &pov, 200);
-        std::cerr << "[probe] GQCS#" << i << " ok=" << ok << " err=" << GetLastError()
-                  << " key=" << (void *)gkey << " bytes=" << bytes << "\n";
-        if (!ok)
-            break;
-        if (gkey != key)
-            continue;
-        DWORD n = 0;
-        BOOL gor = GetOverlappedResult(h, cur, &n, FALSE);
-        std::cerr << "[probe]   GOR ok=" << gor << " err=" << GetLastError() << " bytes=" << n
-                  << "\n";
-        OVERLAPPED ov2{};
-        BOOL reissued = ReadDirectoryChangesW(
-            h, buffer.data(), static_cast<DWORD>(buffer.size()), FALSE, filter, nullptr, &ov2,
-            nullptr);
-        std::cerr << "[probe]   RDCW(reissue) ok=" << reissued << " err=" << GetLastError() << "\n";
-        if (reissued)
-            cur = &ov2;
-        else
-            break;
-    }
-    // Final liveness check on the port itself (mirrors the library's next
-    // poll): timeout here means the port is alive and simply empty.
-    DWORD bytes = 0;
-    ULONG_PTR gkey = 0;
-    OVERLAPPED *pov = nullptr;
-    BOOL liveness = GetQueuedCompletionStatus(port, &bytes, &gkey, &pov, 50);
-    std::cerr << "[probe] GQCS(liveness) ok=" << liveness << " err=" << GetLastError() << "\n";
-
-    CloseHandle(h);
-    CloseHandle(port);
-    std::error_code ec;
-    std::filesystem::remove_all(p, ec);
-
-    // Intentional failure: ctest --output-on-failure prints a case's
-    // captured output only when the case fails, so fail now to surface the
-    // [probe] diagnostics above in the CI log (diagnostic-only; the prints
-    // are the payload, this failure is deliberate).
-    MESSAGE("diagnostic output above");
-    REQUIRE(false);
-}
 #endif
 
 #if PJH_PLATFORM_LINUX
