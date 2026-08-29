@@ -2,7 +2,6 @@
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
-#include <map>
 #include <optional>
 #include <pjh_platform/directory_diff.hpp>
 #include <pjh_platform/file_watcher.hpp>
@@ -217,6 +216,12 @@ namespace pjh::platform
             auto resync_linux(FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out)
                 -> void
             {
+                // Baselines are taken at add() time and only refreshed by an
+                // earlier resync, so this diff runs against a possibly stale
+                // baseline and may re-report changes that were already
+                // delivered directly (bounded to the window since the last
+                // baseline). The net change is still reported; nothing is
+                // silently lost.
                 auto current_dirs = tree_dirs(entry);
 
                 // Reconcile the inotify watch set with the live directory tree:
@@ -604,7 +609,6 @@ namespace pjh::platform
             if (rc == 0)
                 return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
-            std::map<WatchEntry *, std::set<std::filesystem::path> > affected;
             alignas(struct inotify_event) unsigned char buf[64 * 1024];
             for (;;)
             {
@@ -650,7 +654,6 @@ namespace pjh::platform
                         auto full = (ev->len > 0) ? wit->second / ev->name : wit->second;
                         if (!e->is_directory && full != e->path)
                             continue;
-                        affected[e.get()].insert(wit->second);
                         if (auto kind = mask_to_kind(ev->mask))
                         {
                             FileEvent fe;
@@ -684,24 +687,10 @@ namespace pjh::platform
                     break;
             }
 
-            // Refresh the baselines of directories touched by this batch so a
-            // later queue overflow only reports changes made after this batch.
-            for (auto &[e, dirs] : affected)
-            {
-                for (const auto &dir : dirs)
-                {
-                    auto sit = e->snapshots.find(dir);
-                    if (sit == e->snapshots.end())
-                        continue;
-                    auto captured = DirectorySnapshot::capture(dir);
-                    if (captured.is_err())
-                    {
-                        prune_snapshots(*e, dir);
-                        continue;
-                    }
-                    sit->second = std::move(captured).unwrap();
-                }
-            }
+            // No baseline refresh here: the batch emitted its events straight
+            // from the inotify records. Baselines are only taken at add() time
+            // and refreshed by the overflow resync above, so the normal path
+            // never stats the watched directories.
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 #endif
         }
