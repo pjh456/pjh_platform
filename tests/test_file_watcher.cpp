@@ -18,7 +18,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <cstdio>
 #include <fstream>
+#include <set>
 #endif
 
 using pjh::platform::ErrorCode;
@@ -516,37 +518,213 @@ TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
 #endif
 
 #if PJH_PLATFORM_LINUX
+namespace
+{
+    // The per-instance inotify queue limit (max_queued_events); 0 if it
+    // cannot be read from /proc.
+    auto read_inotify_limit() -> int
+    {
+        std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
+        int limit = 0;
+        if (!(limit_file >> limit) || limit <= 0)
+            return 0;
+        return limit;
+    }
+
+    // Poll until a batch comes back empty, appending every batch to `out`;
+    // returns false when a poll fails or 200 polls (2 s) did not empty the
+    // queue.
+    auto drain_until_empty(FileWatcher &w, std::vector<FileEvent> &out) -> bool
+    {
+        for (int i = 0; i < 200; ++i)
+        {
+            auto r = w.poll(std::chrono::milliseconds(10));
+            if (r.is_err())
+                return false;
+            auto batch = std::move(r).unwrap();
+            for (auto &e : batch) out.push_back(std::move(e));
+            if (batch.empty())
+                return true;
+        }
+        return false;
+    }
+}  // namespace
+
 TEST_CASE("FileWatcher recovers events lost to an inotify queue overflow")
 {
+    // Real inotify queue overflow, self-checking. N = limit + 200
+    // distinct-named creates are enqueued without any poll() call:
+    // FileWatcher is single-threaded (the consumer polls, no internal
+    // thread), so the burst is a deterministic queue-depth effect, not a
+    // race. Each distinct name is exactly one IN_CREATE record (distinct
+    // names are never coalesced, man7 NOTES); the per-instance queue
+    // capacity is limit (max_queued_events at inotify_init time), so the
+    // excess is dropped and an IN_Q_OVERFLOW record is always generated
+    // (man7). The queue can hold at most limit < N records, so at least 200
+    // flood names can only be reported through the resync diff: if that path
+    // ever stops running, A1 below fails — the pin is self-validating. (The
+    // replaced old case appended to a single file, whose burst the kernel
+    // coalesced to ~1 record, so it never overflowed.)
     auto p = make_test_dir();
     FileWatcher w;
     REQUIRE(w.add(p, false).is_ok());
 
-    auto file = p / "burst.txt";
-    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
-    collect_until(w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
-
-    // Flood the inotify queue with far more IN_MODIFY events than it can hold.
-    // The kernel discards the surplus and queues a single IN_Q_OVERFLOW marker;
-    // the modifications must then be recovered from the snapshot diff.
-    std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
-    int limit = 0;
-    if (!(limit_file >> limit) || limit <= 0)
-        return;  // cannot determine the queue size; skip
-
-    int fd = ::open(file.c_str(), O_WRONLY | O_APPEND);
-    REQUIRE(fd >= 0);
-    char chunk[64] = {};
-    for (int i = 0; i < limit + 200; ++i)
+    // Seed phase: one file, then drain the queue to empty. The add()
+    // baseline B0 = {} is never refreshed by the normal path (lazy
+    // baseline), so the seed's Created is delivered directly while B0 still
+    // lacks it — the pre-condition of the R1 Created-duplicate.
+    auto seed = p / "seed.txt";
+    REQUIRE(pjh::platform::Fs::write_file(seed, "seed").is_ok());
+    std::vector<FileEvent> all;
     {
-        ssize_t rc = ::write(fd, chunk, sizeof(chunk));
-        REQUIRE(rc == static_cast<ssize_t>(sizeof(chunk)));
+        auto pre = collect_until(
+            w, [&](const auto &a) { return has_event(a, FileEventKind::Created, seed); });
+        CHECK(has_event(pre, FileEventKind::Created, seed));
+        for (auto &e : pre) all.push_back(std::move(e));
     }
-    ::close(fd);
+    std::vector<FileEvent> rest;
+    REQUIRE(drain_until_empty(w, rest));
+    for (auto &e : rest) all.push_back(std::move(e));
 
-    auto events = collect_until(
-        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
-    CHECK(has_event(events, FileEventKind::Modified, file));
+    int seed_created = 0;
+    for (const auto &e : all)
+        if (e.kind == FileEventKind::Created && e.path == seed)
+            ++seed_created;
+    CHECK_EQ(seed_created, 1);
+
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
+    const int n = limit + 200;
+
+    for (int i = 0; i < n; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", i);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    const std::size_t post = all.size();
+    REQUIRE(drain_until_empty(w, all));
+
+    // Index the post-flood Created events by path before the per-name
+    // checks: a linear has_event over ~limit records per name would be
+    // quadratic.
+    std::set<std::filesystem::path> created_paths;
+    for (std::size_t i = post; i < all.size(); ++i)
+        if (all[i].kind == FileEventKind::Created)
+            created_paths.insert(all[i].path);
+
+    // A1: every flood name appears as Created — the self-check (see the
+    // case comment).
+    for (int i = 0; i < n; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", i);
+        CHECK(created_paths.count(p / name) != 0);
+    }
+
+    // A2: the seed's Created was delivered directly once, and the resync
+    // diff against B0 = {} re-reports it exactly once more — the R1
+    // Created-duplicate degradation, independent of where the
+    // IN_Q_OVERFLOW record sits in the drained stream.
+    seed_created = 0;
+    for (const auto &e : all)
+        if (e.kind == FileEventKind::Created && e.path == seed)
+            ++seed_created;
+    CHECK_EQ(seed_created, 2);
+
+    // A3: nothing was deleted in this case, so no Deleted may appear.
+    CHECK_FALSE(
+        std::any_of(
+            all.begin(), all.end(),
+            [](const FileEvent &e) { return e.kind == FileEventKind::Deleted; }));
+
+    // A4: the flood only creates and the resync diff runs against B0 = {},
+    // so the post-flood stream carries no Modified at all.
+    CHECK_FALSE(
+        std::any_of(
+            all.begin() + post, all.end(),
+            [](const FileEvent &e) { return e.kind == FileEventKind::Modified; }));
+
+    // A5: the watcher survived the overflow resync — a fresh create is
+    // delivered directly again.
+    auto after = p / "after.txt";
+    REQUIRE(pjh::platform::Fs::write_file(after, "after").is_ok());
+    auto alive = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Created, after); });
+    CHECK(has_event(alive, FileEventKind::Created, after));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
+
+TEST_CASE("FileWatcher file watch is resynced when the shared inotify queue overflows")
+{
+    // A file entry has no baseline of its own: its overflow recovery is the
+    // stat fallback of the resync early exit. A same-file burst cannot
+    // overflow the shared queue (identical records coalesce into ~1
+    // IN_MODIFY; see the same-file burst case further below), so the
+    // overflow is triggered by the sibling directory entry's records on the
+    // shared inotify instance. Self-checking: watched.txt is never
+    // modified, so the pinned Modified below can only come from the file
+    // branch's resync.
+    auto p = make_test_dir();
+    auto file = p / "watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+    REQUIRE(w.add(file, false).is_ok());
+
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
+    const int n = limit + 200;
+
+    // Same burst as the directory case: N distinct-named creates, no
+    // poll() call, deterministic single-threaded overflow of the shared
+    // queue.
+    for (int i = 0; i < n; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", i);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    std::vector<FileEvent> all;
+    REQUIRE(drain_until_empty(w, all));
+
+    // B1: watched.txt is never modified, and the directory entry's diff
+    // sees it unchanged against the add() baseline, so Modified(file) can
+    // only be the file entry's resync early exit (the file exists).
+    // Without a real shared-queue overflow, no Modified can appear at all.
+    CHECK(has_event(all, FileEventKind::Modified, file));
+
+    // B2: nothing was deleted in this case, so no Deleted may appear.
+    CHECK_FALSE(
+        std::any_of(
+            all.begin(), all.end(),
+            [](const FileEvent &e) { return e.kind == FileEventKind::Deleted; }));
+
+    // B3: the resync re-attached the file watch to the same inode
+    // (idempotent, same descriptor), so a live modification is still
+    // delivered.
+    REQUIRE(pjh::platform::Fs::write_file(file, "modified").is_ok());
+    auto alive = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Modified, file); });
+    CHECK(has_event(alive, FileEventKind::Modified, file));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
 }
 
 TEST_CASE("FileWatcher Linux file watch ignores rename-in and stays inactive after the file moves")
@@ -607,10 +785,12 @@ TEST_CASE("FileWatcher file watch recovers events lost to an inotify queue overf
     FileWatcher w;
     REQUIRE(w.add(file, false).is_ok());
 
-    // Flood the inotify queue with far more IN_MODIFY events on the watched
-    // file itself than it can hold; the kernel discards the surplus and
-    // queues a single IN_Q_OVERFLOW marker, after which the modification
-    // must still be reported (directly or via the resync stat fallback).
+    // The kernel coalesces successive identical records (same wd, mask,
+    // cookie, name) that have not been read yet, so this same-file burst
+    // collapses to about one IN_MODIFY: the queue is never filled and no
+    // IN_Q_OVERFLOW is generated (man7 NOTES). The case anchors the direct
+    // Modified delivery under a large burst; real overflow recovery is
+    // anchored by the two "queue overflow" cases above in this file.
     std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
     int limit = 0;
     if (!(limit_file >> limit) || limit <= 0)
