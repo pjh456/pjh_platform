@@ -95,12 +95,18 @@ namespace pjh::platform
                 return pjh::result::Failure<ErrorCode>{map_windows_error(err)};
             }
             // The port was created by the constructor; this call only
-            // associates `entry.handle` with it and returns a duplicate port
-            // handle, which must be closed or every add() leaks one HANDLE.
-            if (impl.port)
-                CloseHandle(port);
-            else
-                impl.port = port;
+            // associates `entry.handle` with it. On the CI image the returned
+            // handle is the stored port handle itself (no new reference), so
+            // closing it unconditionally destroyed the port (2026-08 Windows
+            // lane regression): close only a genuinely different handle, and
+            // store it only when the constructor's port creation failed.
+            if (port != impl.port)
+            {
+                if (impl.port)
+                    CloseHandle(port);
+                else
+                    impl.port = port;
+            }
 
             entry.buffer.resize(64 * 1024);
             BOOL ok = ReadDirectoryChangesW(
