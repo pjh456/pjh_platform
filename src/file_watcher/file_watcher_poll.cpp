@@ -6,6 +6,7 @@
 #include <pjh_platform/directory_diff.hpp>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -319,9 +320,14 @@ namespace pjh::platform
 #if PJH_PLATFORM_MACOS
         auto process_fsevents(WatchEntry &entry, std::vector<FileEvent> &out) -> void
         {
-            std::vector<std::filesystem::path> diffed;
-            diffed.reserve(entry.pending_events.size());
+            std::vector<std::filesystem::path> unique_dirs;
+            unique_dirs.reserve(entry.pending_events.size());
+            std::set<std::filesystem::path> seen;
+            std::set<std::filesystem::path> reported;
 
+            // Pass 1: resolve every pending event into its remapped reported
+            // path and target directory; the capture and diff below run once
+            // per unique directory, in first-occurrence order.
             for (const auto &pe : entry.pending_events)
             {
                 // FSEvents reports paths with symlinks resolved (e.g.
@@ -367,6 +373,14 @@ namespace pjh::platform
                     d = entry.watch_root;
                 }
 
+                reported.insert(p);
+                if (seen.insert(d).second)
+                    unique_dirs.push_back(d);
+            }
+
+            // Pass 2: capture and diff each unique directory once.
+            for (const auto &d : unique_dirs)
+            {
                 auto captured = DirectorySnapshot::capture(d);
                 if (captured.is_err())
                 {
@@ -413,20 +427,29 @@ namespace pjh::platform
                 {
                     it->second = diff_and_emit(entry, d, it->second, std::move(current), out);
                 }
-                diffed.push_back(d);
             }
 
             if (entry.is_directory && entry.recursive)
             {
                 // FSEvents may coalesce several changes onto a single reported
-                // path, so re-diff every established subdirectory that was not
-                // already diffed above.
+                // path, so re-diff the established subdirectories under any
+                // reported path that were not diffed above. Coalescing onto
+                // the watch root degenerates to the original full rescan.
                 std::vector<std::filesystem::path> dirs;
                 dirs.reserve(entry.snapshots.size());
                 for (const auto &kv : entry.snapshots) dirs.push_back(kv.first);
                 for (const auto &dir : dirs)
                 {
-                    if (std::find(diffed.begin(), diffed.end(), dir) != diffed.end())
+                    if (seen.count(dir) != 0)
+                        continue;
+                    bool covered = false;
+                    for (const auto &rp : reported)
+                        if (dir == rp || path_is_under(dir, rp))
+                        {
+                            covered = true;
+                            break;
+                        }
+                    if (!covered)
                         continue;
                     auto captured = DirectorySnapshot::capture(dir);
                     if (captured.is_err())

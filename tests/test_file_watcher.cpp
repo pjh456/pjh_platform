@@ -417,6 +417,36 @@ TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
                   << " drain_us=" << us << " events=" << events << "\n";
     }
 
+    // S4: recursive watch, churn localized to one subdirectory; the other
+    // subdirs must stay out of the per-batch rescan (C2; Linux/Windows numbers
+    // are reference).
+    {
+        const int subs = 10;
+        for (int i = 0; i < subs; ++i)
+        {
+            auto sub = p / ("sub" + std::to_string(i));
+            REQUIRE(std::filesystem::create_directories(sub));
+            for (std::size_t j = 0; j < n / subs; ++j)
+                REQUIRE(
+                    pjh::platform::Fs::write_file(sub / ("s" + std::to_string(j) + ".bin"), "x")
+                        .is_ok());
+        }
+        FileWatcher w;
+        REQUIRE(w.add(p, true).is_ok());
+        const int rounds = 100;
+        for (int i = 0; i < rounds; ++i)
+        {
+            auto f = p / "sub0" / ("churn" + std::to_string(i) + ".tmp");
+            REQUIRE(pjh::platform::Fs::write_file(f, "one").is_ok());
+            REQUIRE(pjh::platform::Fs::write_file(f, "two two").is_ok());
+            REQUIRE(std::filesystem::remove(f));
+        }
+        auto [us, events] = drain(w);
+        REQUIRE(us >= 0);
+        std::cout << "watch-bench S4 recursive subdir churn: N=" << n << " rounds=" << rounds
+                  << " drain_us=" << us << " events=" << events << "\n";
+    }
+
     std::error_code ec;
     std::filesystem::remove_all(p, ec);
 }
