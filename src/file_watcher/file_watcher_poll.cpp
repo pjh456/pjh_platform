@@ -8,6 +8,7 @@
 #include <pjh_platform/platform.hpp>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -65,18 +66,21 @@ namespace pjh::platform
                     DirectoryDiff diff = std::move(dr).unwrap();
                     auto renames = diff.detect_renames(before, current);
 
-                    std::vector<std::filesystem::path> suppressed;
+                    // Suppression table over the rename pair basenames:
+                    // membership is O(1) amortized via
+                    // unordered_set::contains instead of a per-change
+                    // linear scan.
+                    std::unordered_set<std::filesystem::path> suppressed;
                     suppressed.reserve(renames.size() * 2);
                     for (const auto &r : renames)
                     {
-                        suppressed.push_back(r.m_old_filename);
-                        suppressed.push_back(r.m_new_filename);
+                        suppressed.insert(r.m_old_filename);
+                        suppressed.insert(r.m_new_filename);
                     }
 
                     for (const auto &ch : diff.changes())
                     {
-                        if (std::find(suppressed.begin(), suppressed.end(), ch.m_filename) !=
-                            suppressed.end())
+                        if (suppressed.contains(ch.m_filename))
                             continue;
                         if (!entry.is_directory && ch.m_full_path != entry.path)
                             continue;

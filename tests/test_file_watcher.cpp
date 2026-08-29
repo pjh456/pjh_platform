@@ -727,6 +727,274 @@ TEST_CASE("FileWatcher file watch is resynced when the shared inotify queue over
     std::filesystem::remove_all(p, ec);
 }
 
+TEST_CASE("FileWatcher resync reports rename pairs as Moved after an inotify queue overflow")
+{
+    // Non-empty suppression-table pin: R rename pairs plus filler creates
+    // total limit + 200 records, so the shared queue overflows (the excess
+    // is dropped and an IN_Q_OVERFLOW record is guaranteed, man7) and the
+    // recovery diff must suppress every pair's Created/Deleted and report
+    // each pair once, as a MovedFrom/MovedTo block. This case ran green on
+    // the pre-fix HEAD (baseline gate) and must stay green with an
+    // identical assertion count after the suppression table is indexed.
+    const int r = 64;
+    auto p = make_test_dir();
+    for (int i = 0; i < r; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "old_%06d", i);
+        // Distinct sizes 1..64 make every (size, mtime) bucket unique, so
+        // detect_renames pairs old_i -> new_i regardless of mtime
+        // granularity.
+        REQUIRE(pjh::platform::Fs::write_file(p / name, std::string(i + 1, 'x')).is_ok());
+    }
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());  // baseline B0 = {old_0..old_63}
+
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
+    const int c = limit + 200 - 2 * r;
+
+    // Flood with no poll(): single-threaded, so the queue fills
+    // monotonically and the overflow is deterministic.
+    for (int i = 0; i < r; ++i)
+    {
+        char oname[16] = {};
+        char nname[16] = {};
+        std::snprintf(oname, sizeof(oname), "old_%06d", i);
+        std::snprintf(nname, sizeof(nname), "new_%06d", i);
+        std::error_code ec;
+        std::filesystem::rename(p / oname, p / nname, ec);
+        REQUIRE_FALSE(ec);
+    }
+    for (int j = 0; j < c; ++j)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", j);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    std::vector<FileEvent> all;
+    REQUIRE(drain_until_empty(w, all));
+
+    // Index the drained stream once by kind before the per-name checks: a
+    // linear has_event over ~16k records per name would be quadratic.
+    std::set<std::filesystem::path> moved_from_paths;
+    std::set<std::filesystem::path> moved_to_paths;
+    std::set<std::filesystem::path> created_paths;
+    std::set<std::filesystem::path> deleted_paths;
+    long long modified_count = 0;
+    for (const auto &e : all)
+    {
+        if (e.kind == FileEventKind::MovedFrom)
+            moved_from_paths.insert(e.path);
+        else if (e.kind == FileEventKind::MovedTo)
+            moved_to_paths.insert(e.path);
+        else if (e.kind == FileEventKind::Created)
+            created_paths.insert(e.path);
+        else if (e.kind == FileEventKind::Deleted)
+            deleted_paths.insert(e.path);
+        else if (e.kind == FileEventKind::Modified)
+            ++modified_count;
+    }
+
+    // A1 (self-check, Moved): every pair is reported as a Moved pair — with
+    // at least 200 records dropped, some names have no direct record, so
+    // the Moved events can only come from the resync rename loop.
+    // A2 (the suppression discriminator): no pair name may leak as
+    // Created/Deleted — that is the suppression table's job.
+    for (int i = 0; i < r; ++i)
+    {
+        char oname[16] = {};
+        char nname[16] = {};
+        std::snprintf(oname, sizeof(oname), "old_%06d", i);
+        std::snprintf(nname, sizeof(nname), "new_%06d", i);
+        CHECK(moved_from_paths.count(p / oname) != 0);
+        CHECK(moved_to_paths.count(p / nname) != 0);
+        CHECK(created_paths.count(p / oname) == 0);
+        CHECK(deleted_paths.count(p / oname) == 0);
+        CHECK(created_paths.count(p / nname) == 0);
+        CHECK(deleted_paths.count(p / nname) == 0);
+    }
+
+    // A3: nothing was deleted in this case, so no Deleted may appear (the
+    // diff's Deleted(old_i) are all suppressed).
+    CHECK(deleted_paths.empty());
+
+    // A4 (self-check, filler): every filler name is reported as Created —
+    // the resync diff ran (a linear has_event per name over ~16k records
+    // would be quadratic, so the index above answers the per-name lookups).
+    for (int j = 0; j < c; ++j)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", j);
+        CHECK(created_paths.count(p / name) != 0);
+    }
+
+    // A4b: the flood is rename+create only, so no Modified may appear.
+    CHECK_EQ(modified_count, 0LL);
+
+    // A5 (the Moved-block order pin): the drained stream holds one
+    // contiguous 2R window that is exactly
+    // [MovedFrom(old_0), MovedTo(new_0), ..., MovedFrom(old_63),
+    //  MovedTo(new_63)] — the changes loop emits no Moved, and the rename
+    // loop emits deleted-name ascending, From then To per pair. One-shot
+    // window scan: O(|all| * 2R) total (R is a constant 64).
+    {
+        std::vector<std::pair<FileEventKind, std::filesystem::path>> expected;
+        expected.reserve(static_cast<std::size_t>(2) * r);
+        for (int i = 0; i < r; ++i)
+        {
+            char oname[16] = {};
+            char nname[16] = {};
+            std::snprintf(oname, sizeof(oname), "old_%06d", i);
+            std::snprintf(nname, sizeof(nname), "new_%06d", i);
+            expected.emplace_back(FileEventKind::MovedFrom, p / oname);
+            expected.emplace_back(FileEventKind::MovedTo, p / nname);
+        }
+        bool window_found = false;
+        if (all.size() >= expected.size())
+        {
+            for (std::size_t pos = 0; pos + expected.size() <= all.size() && !window_found; ++pos)
+            {
+                window_found = true;
+                for (std::size_t k = 0; k < expected.size(); ++k)
+                {
+                    if (all[pos + k].kind != expected[k].first ||
+                        all[pos + k].path != expected[k].second)
+                    {
+                        window_found = false;
+                        break;
+                    }
+                }
+            }
+        }
+        CHECK(window_found);
+    }
+
+    // A6 (liveness): the watcher survived the overflow resync — a fresh
+    // create is delivered directly again.
+    auto after = p / "after.txt";
+    REQUIRE(pjh::platform::Fs::write_file(after, "after").is_ok());
+    auto alive = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Created, after); });
+    CHECK(has_event(alive, FileEventKind::Created, after));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
+
+TEST_CASE(
+    "FileWatcher overflow rename-storm resync benchmark gated by PJH_RENAME_STORM_BENCH_PAIRS")
+{
+    // Rename-storm measurement for the overflow recovery path: the env
+    // names the pair count n; the flood totals limit + 200 records (the
+    // T-OVF-1 queue pressure) split into n renames and the rest empty
+    // creates. Plain ctest is a silent no-op.
+    const char *raw = std::getenv("PJH_RENAME_STORM_BENCH_PAIRS");
+    if (raw == nullptr)
+        return;
+    const int n = static_cast<int>(std::strtoul(raw, nullptr, 10));
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
+    if (n < 256 || n > limit)
+        return;  // degenerate scale: below the storm floor or past the
+                 // queue limit, the record budget no longer overflows
+
+    const int c = limit + 200 - 2 * n;
+    auto p = make_test_dir();
+    for (int i = 0; i < n; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "old_%06d", i);
+        // Distinct sizes make every (size, mtime) bucket unique, so the
+        // pairing is exact regardless of mtime granularity.
+        REQUIRE(pjh::platform::Fs::write_file(p / name, std::string(i + 1, 'x')).is_ok());
+    }
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    std::vector<FileEvent> all;
+    auto t_flood = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; ++i)
+    {
+        char oname[16] = {};
+        char nname[16] = {};
+        std::snprintf(oname, sizeof(oname), "old_%06d", i);
+        std::snprintf(nname, sizeof(nname), "new_%06d", i);
+        std::error_code ec;
+        std::filesystem::rename(p / oname, p / nname, ec);
+        REQUIRE_FALSE(ec);
+    }
+    for (int j = 0; j < c; ++j)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", j);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+    auto t_drain_start = std::chrono::steady_clock::now();
+    REQUIRE(drain_until_empty(w, all));
+    auto t_end = std::chrono::steady_clock::now();
+    const long long case_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_flood).count();
+    const long long drain_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_drain_start).count();
+
+    // Assertions on the drained stream, indexed by kind in one pass (a
+    // linear has_event per name over ~16k records would be quadratic).
+    std::set<std::filesystem::path> moved_to_paths;
+    std::set<std::filesystem::path> created_paths;
+    std::set<std::filesystem::path> deleted_paths;
+    long long moved_from_count = 0;
+    for (const auto &e : all)
+    {
+        if (e.kind == FileEventKind::MovedFrom)
+            ++moved_from_count;
+        else if (e.kind == FileEventKind::MovedTo)
+            moved_to_paths.insert(e.path);
+        else if (e.kind == FileEventKind::Created)
+            created_paths.insert(e.path);
+        else if (e.kind == FileEventKind::Deleted)
+            deleted_paths.insert(e.path);
+    }
+    for (int i = 0; i < n; ++i)
+    {
+        char oname[16] = {};
+        char nname[16] = {};
+        std::snprintf(oname, sizeof(oname), "old_%06d", i);
+        std::snprintf(nname, sizeof(nname), "new_%06d", i);
+        REQUIRE(moved_to_paths.count(p / nname) != 0);
+        REQUIRE(created_paths.count(p / oname) == 0);
+        REQUIRE(deleted_paths.count(p / oname) == 0);
+        REQUIRE(created_paths.count(p / nname) == 0);
+        REQUIRE(deleted_paths.count(p / nname) == 0);
+    }
+    for (int j = 0; j < c; ++j)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", j);
+        REQUIRE(created_paths.count(p / name) != 0);
+    }
+    REQUIRE(moved_from_count >= n);
+    REQUIRE(moved_from_count <= 2 * static_cast<long long>(n));
+
+    std::cout << "rename-storm-bench: pairs=" << n << " fillers=" << c << " case_us=" << case_us
+              << " drain_us=" << drain_us << " events=" << all.size() << "\n";
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
+
 TEST_CASE("FileWatcher Linux file watch ignores rename-in and stays inactive after the file moves")
 {
     auto p = make_test_dir();
