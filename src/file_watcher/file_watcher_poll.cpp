@@ -197,14 +197,14 @@ namespace pjh::platform
                 return std::nullopt;
             }
 
-            auto remove_subdir_watches(int fd, WatchEntry &entry, const std::filesystem::path &dir)
-                -> void
+            auto remove_subdir_watches(
+                FileWatcherImpl &impl, WatchEntry &entry, const std::filesystem::path &dir) -> void
             {
                 for (auto it = entry.wd_to_path.begin(); it != entry.wd_to_path.end();)
                 {
                     if (it->first != entry.root_wd && path_is_under(it->second, dir))
                     {
-                        ::inotify_rm_watch(fd, it->first);
+                        release_watch(impl, entry, it->first);
                         it = entry.wd_to_path.erase(it);
                     }
                     else
@@ -272,7 +272,7 @@ namespace pjh::platform
                         std::find(current_dirs.begin(), current_dirs.end(), it->second) ==
                             current_dirs.end())
                     {
-                        ::inotify_rm_watch(impl.fd, it->first);
+                        release_watch(impl, entry, it->first);
                         it = entry.wd_to_path.erase(it);
                     }
                     else
@@ -724,7 +724,7 @@ namespace pjh::platform
                             }
                             else if (ev->mask & IN_DELETE)
                             {
-                                remove_subdir_watches(impl.fd, *e, full);
+                                remove_subdir_watches(impl, *e, full);
                                 prune_snapshots(*e, full);
                             }
                         }

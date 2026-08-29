@@ -132,6 +132,12 @@ namespace pjh::platform
         ///        inode: `watch_mask()` plus the self-deletion/move-out
         ///        signals.
         [[nodiscard]] auto file_watch_mask() -> std::uint32_t;
+        /// @brief Removes @p wd from the kernel only when no other live entry
+        ///        still references it. `inotify_add_watch` is idempotent per
+        ///        fd+inode, so a recursive walk and a separate add of the same
+        ///        directory share one kernel watch; the last holder to drop
+        ///        its record removes the watch.
+        auto release_watch(FileWatcherImpl &impl, const WatchEntry &self, int wd) -> void;
 #endif
 
 #if PJH_PLATFORM_MACOS

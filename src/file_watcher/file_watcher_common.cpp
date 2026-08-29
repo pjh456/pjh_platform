@@ -121,6 +121,23 @@ namespace pjh::platform::detail
         // removed" behavior stays unchanged).
         return watch_mask() | IN_DELETE_SELF | IN_MOVE_SELF;
     }
+
+    auto release_watch(FileWatcherImpl &impl, const WatchEntry &self, int wd) -> void
+    {
+        // inotify has no per-entry reference counting: one inotify_rm_watch
+        // destroys the watch for every entry referencing the wd. The wd may
+        // be shared (inotify_add_watch is idempotent per fd+inode, so a
+        // recursive walk and a separate add of the same directory return the
+        // same descriptor); only the last holder removes it from the kernel.
+        for (const auto &other : impl.entries)
+        {
+            if (other.get() == &self)
+                continue;
+            if (other->wd_to_path.find(wd) != other->wd_to_path.end())
+                return;
+        }
+        ::inotify_rm_watch(impl.fd, wd);
+    }
 #endif
 
 #if PJH_PLATFORM_MACOS

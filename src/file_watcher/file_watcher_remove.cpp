@@ -86,7 +86,7 @@ namespace pjh::platform
             entry.snapshots.clear();
             entry.pending_events.clear();
 #else
-            for (auto &[wd, unused] : entry.wd_to_path) ::inotify_rm_watch(impl.fd, wd);
+            for (auto &[wd, unused] : entry.wd_to_path) release_watch(impl, entry, wd);
             entry.wd_to_path.clear();
             entry.root_wd = -1;
 #endif

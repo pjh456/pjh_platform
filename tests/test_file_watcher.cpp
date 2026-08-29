@@ -578,6 +578,98 @@ TEST_CASE("FileWatcher file watch recovers events lost to an inotify queue overf
         w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
     CHECK(has_event(events, FileEventKind::Modified, file));
 }
+
+TEST_CASE("FileWatcher removing a recursive watch keeps a separate sub-directory watch alive")
+{
+    auto p = make_test_dir();
+    auto sub = p / "sub";
+    REQUIRE(std::filesystem::create_directories(sub));
+
+    FileWatcher w;
+    REQUIRE(w.add(p, true).is_ok());
+    REQUIRE(w.add(sub, false).is_ok());
+    CHECK(w.remove(p).is_ok());
+
+    // The two entries share the kernel watch on `sub` (inotify_add_watch is
+    // idempotent per fd+inode); removing the recursive entry must not kill
+    // the sub-directory entry's share of it.
+    auto file = sub / "inside.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "nested").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    CHECK(has_event(events, FileEventKind::Created, file));
+}
+
+TEST_CASE("FileWatcher removing a sub-directory watch keeps the recursive watch alive")
+{
+    auto p = make_test_dir();
+    auto sub = p / "sub";
+    REQUIRE(std::filesystem::create_directories(sub));
+
+    FileWatcher w;
+    REQUIRE(w.add(p, true).is_ok());
+    REQUIRE(w.add(sub, false).is_ok());
+    CHECK(w.remove(sub).is_ok());
+
+    // Mirror of the previous case: the recursive entry must keep its
+    // sub-directory watch after the separate sub-directory entry is removed.
+    auto file = sub / "inside2.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "nested").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    CHECK(has_event(events, FileEventKind::Created, file));
+}
+
+TEST_CASE("FileWatcher directory deletion tears down a shared watch for all holders")
+{
+    auto p = make_test_dir();
+    auto sub = p / "sub";
+    auto other = p / "other";
+    REQUIRE(std::filesystem::create_directories(sub));
+    REQUIRE(std::filesystem::create_directories(other));
+
+    FileWatcher w;
+    REQUIRE(w.add(p, true).is_ok());
+    REQUIRE(w.add(sub, false).is_ok());
+
+    // Deleting `sub` destroys the shared kernel watch; every holder must
+    // drop its record at once (the IN_IGNORED is consumed per entry) while
+    // the sibling directory keeps reporting through the recursive entry.
+    REQUIRE(std::filesystem::remove_all(sub));
+    auto alive = other / "alive.txt";
+    REQUIRE(pjh::platform::Fs::write_file(alive, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, alive); });
+    CHECK(has_event(events, FileEventKind::Created, alive));
+
+    // Zombie cycle: the now-dead sub entry is removable, and the path can be
+    // re-registered after re-creation with no stale IN_IGNORED residue.
+    CHECK(w.remove(sub).is_ok());
+    REQUIRE(std::filesystem::create_directories(sub));
+    REQUIRE(w.add(sub, false).is_ok());
+    auto again = sub / "again.txt";
+    REQUIRE(pjh::platform::Fs::write_file(again, "x").is_ok());
+    events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, again); });
+    CHECK(has_event(events, FileEventKind::Created, again));
+}
+
+TEST_CASE("FileWatcher close releases shared watches without error")
+{
+    auto p = make_test_dir();
+    auto sub = p / "sub";
+    REQUIRE(std::filesystem::create_directories(sub));
+
+    FileWatcher w;
+    REQUIRE(w.add(p, true).is_ok());
+    REQUIRE(w.add(sub, false).is_ok());
+
+    // Both entries share the kernel watch on `sub`; close() must walk the
+    // shared descriptor exactly once and leave no observable error.
+    w.close();
+    w.close();
+    CHECK(w.poll(std::chrono::milliseconds(10)).is_err());
+}
 #endif
 
 TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
