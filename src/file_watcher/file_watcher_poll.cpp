@@ -6,7 +6,6 @@
 #include <pjh_platform/directory_diff.hpp>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -497,7 +496,6 @@ namespace pjh::platform
             DWORD notify_bytes = 0;
             if (GetOverlappedResult(entry->handle, &entry->overlapped, &notify_bytes, FALSE))
             {
-                std::set<std::filesystem::path> affected;
                 std::size_t off = 0;
                 while (off + sizeof(FILE_NOTIFY_INFORMATION) <=
                        static_cast<std::size_t>(notify_bytes))
@@ -515,7 +513,6 @@ namespace pjh::platform
                     {
                         out.push_back(FileEvent{*kind, full, std::nullopt});
                     }
-                    affected.insert(full.parent_path());
                     if (rec->Action == FILE_ACTION_ADDED)
                     {
                         // A new directory gets its own baseline so changes made
@@ -535,22 +532,6 @@ namespace pjh::platform
                     if (rec->NextEntryOffset == 0)
                         break;
                     off += rec->NextEntryOffset;
-                }
-
-                // Refresh the baselines of directories touched by this batch so
-                // a later buffer overflow only reports changes made after it.
-                for (const auto &dir : affected)
-                {
-                    auto sit = entry->snapshots.find(dir);
-                    if (sit == entry->snapshots.end())
-                        continue;
-                    auto captured = DirectorySnapshot::capture(dir);
-                    if (captured.is_err())
-                    {
-                        prune_snapshots(*entry, dir);
-                        continue;
-                    }
-                    sit->second = std::move(captured).unwrap();
                 }
             }
             else
