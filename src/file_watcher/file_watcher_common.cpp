@@ -28,16 +28,19 @@ namespace pjh::platform::detail
     namespace
     {
         // A directory read completing with one of these codes means the
-        // watched path itself is gone: ERROR_BROKEN_PIPE is the stale-handle
-        // error the in-flight read reports when its directory is removed,
-        // the rest are the not-found family. The handle is dead and the
-        // watch can never recover.
+        // watched path itself is gone: the not-found family, plus what an
+        // in-flight read reports when its directory is removed out from
+        // under it — observed ERROR_ACCESS_DENIED on the CI's NTFS runner
+        // (the FILE_SHARE_DELETE handle outlives the directory),
+        // ERROR_BROKEN_PIPE is the stale-handle variant. The watch can
+        // never recover; the entry is torn down, not re-issued.
         auto is_path_gone(DWORD err) -> bool
         {
             switch (err)
             {
             case ERROR_FILE_NOT_FOUND:
             case ERROR_PATH_NOT_FOUND:
+            case ERROR_ACCESS_DENIED:
             case ERROR_BROKEN_PIPE:
                 return true;
             default:
@@ -74,9 +77,12 @@ namespace pjh::platform::detail
         if (is_path_gone(oserr))
         {
             // The watched path is gone; the watch is dead and must not be
-            // re-issued on the stale handle.
+            // re-issued on the stale handle. Surface NotFound directly: the
+            // raw code's generic mapping serves other callers (e.g.
+            // ERROR_ACCESS_DENIED must stay PermissionDenied for a denied
+            // CreateFileW).
             mark_watch_dead(entry);
-            return map_windows_error(oserr);
+            return ErrorCode::NotFound;
         }
         // Transient failure: re-issue the read so the watch stays alive.
         if (issue_read(impl, entry))
@@ -87,7 +93,7 @@ namespace pjh::platform::detail
         if (is_path_gone(reissue_err))
         {
             mark_watch_dead(entry);
-            return map_windows_error(reissue_err);
+            return ErrorCode::NotFound;
         }
         return map_windows_error(oserr);
     }

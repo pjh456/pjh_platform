@@ -484,10 +484,12 @@ TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
 
     REQUIRE(std::filesystem::remove_all(dir));
 
-    // The in-flight read on the removed directory fails with a path-gone code
-    // (ERROR_BROKEN_PIPE on NTFS); the failure must map to NotFound, not
-    // Unknown, and the watch must then stay quietly dead instead of going
-    // deaf or re-failing on every poll.
+    // The in-flight read on the removed directory fails with a path-gone
+    // code; the CI's NTFS runner reports ERROR_ACCESS_DENIED (the FILE_SHARE_DELETE
+    // handle outlives the directory), ERROR_BROKEN_PIPE is the stale-handle
+    // variant. The failure must map to NotFound, not Unknown, and the watch
+    // must then stay quietly dead instead of going deaf or re-failing on
+    // every poll.
     ErrorCode err = ErrorCode::Success;
     for (int i = 0; i < 200; ++i)
     {
