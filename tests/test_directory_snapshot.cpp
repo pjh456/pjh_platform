@@ -413,3 +413,55 @@ TEST_CASE("Fnv1a64Hasher benchmark gated by PJH_HASH_BENCH_BYTES")
               << " iters=" << iters << " total_us=" << mtotal_us
               << " us_per_run=" << mtotal_us / iters << " mb_per_s=" << mmb_per_s << "\n";
 }
+
+namespace
+{
+    // Hash strategy with no I/O: isolates the cost of matching the hash-file
+    // list inside capture_impl from the content hashing itself.
+    struct NoopHasher
+    {
+        auto operator()(const std::filesystem::path &) const -> std::optional<FileHash>
+        {
+            return FileHash{0};
+        }
+    };
+}  // namespace
+
+TEST_CASE("DirectorySnapshot hash-list matching benchmark gated by PJH_HASH_MATCH_BENCH_FILES")
+{
+    // Baseline / regression benchmark for the hash-file-list matching in
+    // capture_impl. The measurement and its stdout output happen only when
+    // PJH_HASH_MATCH_BENCH_FILES names the file count to create (recommend
+    // 10000; 5000 on slow machines, e.g. Windows CI); a plain `ctest` run is a
+    // no-op and stays silent. The list covers every filename, so the matching
+    // work (the measured cost) is maximal while hashing does nothing.
+    const char *raw = std::getenv("PJH_HASH_MATCH_BENCH_FILES");
+    if (raw == nullptr)
+        return;
+    const auto n = static_cast<std::size_t>(std::strtoull(raw, nullptr, 10));
+    REQUIRE(n >= 1000u);
+
+    auto p = make_test_dir();
+    std::vector<std::filesystem::path> list;
+    list.reserve(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        auto name = "f_" + std::to_string(i) + ".txt";
+        REQUIRE(pjh::platform::Fs::write_file(p / name, "").is_ok());
+        list.push_back(std::move(name));
+    }
+
+    (void)DirectorySnapshot::capture(p, &list, NoopHasher{});  // warm-up
+
+    const int iters = 3;
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < iters; ++i)
+    {
+        auto r = DirectorySnapshot::capture(p, &list, NoopHasher{});
+        REQUIRE(r.is_ok());
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    const auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    std::cout << "hash-match-bench: files=" << n << " list=" << list.size() << " iters=" << iters
+              << " total_us=" << total_us << " us_per_run=" << total_us / iters << "\n";
+}

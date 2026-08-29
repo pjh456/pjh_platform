@@ -93,13 +93,13 @@ namespace pjh::platform
             std::size_t file_count,
             std::size_t dir_count,
             std::vector<ExtensionSummary> extensions,
-            std::vector<SizeEntry> files_by_size);
+            std::vector<SizeEntry> files_with_sizes);
 
         std::uintmax_t m_total_size;
         std::size_t m_file_count;
         std::size_t m_dir_count;
         std::vector<ExtensionSummary> m_extensions;
-        std::vector<SizeEntry> m_files_by_size;
+        std::vector<SizeEntry> m_files_with_sizes;
     };
 
 }  // namespace pjh::platform

@@ -5,6 +5,7 @@
 #include <iterator>
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/platform.hpp>
+#include <unordered_set>
 #include <utility>
 
 #if PJH_PLATFORM_WINDOWS
@@ -188,13 +189,14 @@ namespace pjh::platform
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         }
 
-        // Precompute the set of basenames to hash so matching stays O(1).
-        std::optional<std::vector<std::filesystem::path>> hash_names;
+        // Precompute the set of basenames to hash: construction is O(k) and
+        // per-entry matching is O(1) amortized via unordered_set::contains.
+        std::optional<std::unordered_set<std::filesystem::path>> hash_names;
         if (hash_files)
         {
             hash_names.emplace();
             hash_names->reserve(hash_files->size());
-            for (const auto &p : *hash_files) hash_names->push_back(p.filename());
+            for (const auto &p : *hash_files) hash_names->insert(p.filename());
         }
 
         DirectorySnapshot snap;
@@ -235,10 +237,7 @@ namespace pjh::platform
             auto filename = it->path().filename();
             if (!entry.m_is_directory && hasher)
             {
-                bool should_hash =
-                    !hash_names || std::any_of(
-                                       hash_names->begin(), hash_names->end(),
-                                       [&filename](const auto &n) { return n == filename; });
+                bool should_hash = !hash_names || hash_names->contains(filename);
                 if (should_hash)
                     entry.m_hash = (*hasher)(it->path());
             }

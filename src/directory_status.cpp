@@ -32,15 +32,6 @@ namespace pjh::platform
             summary.m_total_size += entry.m_file_size;
         }
 
-        std::sort(
-            by_size.begin(), by_size.end(),
-            [](const SizeEntry &a, const SizeEntry &b)
-            {
-                if (a.m_size != b.m_size)
-                    return a.m_size > b.m_size;
-                return a.m_path < b.m_path;
-            });
-
         std::vector<ExtensionSummary> extensions;
         extensions.reserve(by_extension.size());
         for (auto &pair : by_extension) extensions.push_back(std::move(pair.second));
@@ -61,10 +52,27 @@ namespace pjh::platform
 
     auto DirectoryStatus::largest_files(std::size_t n) const -> std::vector<std::filesystem::path>
     {
+        const std::size_t k = std::min(n, m_files_with_sizes.size());
+        if (k == 0)
+            return {};
+
+        // m_files_with_sizes is unsorted; ranking happens at query time. The
+        // comparator (size descending, path ascending) is a total order over
+        // unique paths, so partial_sort's prefix is element-identical to the
+        // prefix of a full sort.
+        std::vector<SizeEntry> top(m_files_with_sizes.begin(), m_files_with_sizes.end());
+        std::partial_sort(
+            top.begin(), top.begin() + k, top.end(),
+            [](const SizeEntry &a, const SizeEntry &b)
+            {
+                if (a.m_size != b.m_size)
+                    return a.m_size > b.m_size;
+                return a.m_path < b.m_path;
+            });
+
         std::vector<std::filesystem::path> result;
-        result.reserve(std::min(n, m_files_by_size.size()));
-        for (std::size_t i = 0; i < m_files_by_size.size() && i < n; ++i)
-            result.push_back(m_files_by_size[i].m_path);
+        result.reserve(k);
+        for (std::size_t i = 0; i < k; ++i) result.push_back(top[i].m_path);
         return result;
     }
 
@@ -73,12 +81,12 @@ namespace pjh::platform
         std::size_t file_count,
         std::size_t dir_count,
         std::vector<ExtensionSummary> extensions,
-        std::vector<SizeEntry> files_by_size) :
+        std::vector<SizeEntry> files_with_sizes) :
         m_total_size(total_size),
         m_file_count(file_count),
         m_dir_count(dir_count),
         m_extensions(std::move(extensions)),
-        m_files_by_size(std::move(files_by_size))
+        m_files_with_sizes(std::move(files_with_sizes))
     {
     }
 

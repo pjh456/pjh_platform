@@ -1,7 +1,10 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/directory_status.hpp>
 #include <pjh_platform/fs.hpp>
@@ -101,6 +104,29 @@ TEST_CASE("DirectoryStatus reports largest files in descending order")
     CHECK(status.largest_files(0).empty());
 }
 
+TEST_CASE("DirectoryStatus largest_files orders equal sizes by ascending path")
+{
+    // Pins the (size descending, path ascending) total order: entries that tie
+    // on size must come out in ascending path order, and a larger file must
+    // still rank first. This is the determinism guarantee of the top-n
+    // selection in largest_files.
+    auto p = make_test_dir();
+    REQUIRE(pjh::platform::Fs::write_file(p / "b.txt", "12345").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(p / "a.txt", "12345").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(p / "c.txt", "12345").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(p / "d.txt", "12345").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(p / "big.bin", "0123456789").is_ok());
+
+    auto status = DirectoryStatus::from(DirectorySnapshot::capture(p).unwrap());
+    auto all = status.largest_files(100);
+    REQUIRE_EQ(all.size(), 5u);
+    CHECK_EQ(all[0], p / "big.bin");
+    CHECK_EQ(all[1], p / "a.txt");
+    CHECK_EQ(all[2], p / "b.txt");
+    CHECK_EQ(all[3], p / "c.txt");
+    CHECK_EQ(all[4], p / "d.txt");
+}
+
 TEST_CASE("DirectoryStatus excludes directories from sizes and extensions")
 {
     auto p = make_test_dir();
@@ -113,4 +139,45 @@ TEST_CASE("DirectoryStatus excludes directories from sizes and extensions")
     CHECK_EQ(status.dir_count(), 1u);
     CHECK(status.extension_summaries().empty());
     CHECK(status.largest_files(10).empty());
+}
+
+TEST_CASE("DirectoryStatus from + largest_files benchmark gated by PJH_STATUS_TOPN_BENCH_FILES")
+{
+    // Baseline / regression benchmark for DirectoryStatus::from +
+    // largest_files(10). The measurement and its stdout output happen only
+    // when PJH_STATUS_TOPN_BENCH_FILES names the file count to create
+    // (recommend 10000; 5000 on slow machines, e.g. Windows CI); a plain
+    // `ctest` run is a no-op and stays silent. File sizes cycle over 64
+    // values so many entries tie on size, amplifying the comparator's path
+    // comparisons (worst case for a full sort).
+    const char *raw = std::getenv("PJH_STATUS_TOPN_BENCH_FILES");
+    if (raw == nullptr)
+        return;
+    const auto n = static_cast<std::size_t>(std::strtoull(raw, nullptr, 10));
+    REQUIRE(n >= 1000u);
+
+    auto p = make_test_dir("topn_bench");
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        auto name = "f_" + std::to_string(i) + ".txt";
+        REQUIRE(pjh::platform::Fs::write_file(p / name, std::string(i % 64, 'x')).is_ok());
+    }
+
+    auto s = DirectorySnapshot::capture(p);
+    REQUIRE(s.is_ok());
+    auto snap = std::move(s).unwrap();
+
+    (void)DirectoryStatus::from(snap).largest_files(10);  // warm-up
+
+    const int iters = 50;
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < iters; ++i)
+    {
+        auto v = DirectoryStatus::from(snap).largest_files(10);
+        REQUIRE_EQ(v.size(), 10u);
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    const auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    std::cout << "status-topn-bench: files=" << n << " iters=" << iters << " total_us=" << total_us
+              << " us_per_run=" << total_us / iters << "\n";
 }
