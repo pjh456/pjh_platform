@@ -38,7 +38,6 @@ namespace pjh::platform::detail
             {
             case ERROR_FILE_NOT_FOUND:
             case ERROR_PATH_NOT_FOUND:
-            case ERROR_DIR_NOT_FOUND:
             case ERROR_BROKEN_PIPE:
                 return true;
             default:
