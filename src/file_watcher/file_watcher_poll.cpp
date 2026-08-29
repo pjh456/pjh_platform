@@ -237,8 +237,22 @@ namespace pjh::platform
                     // Re-attach the watch to whatever inode now occupies the
                     // path (idempotent for a still-live watch, which returns
                     // the existing descriptor). If the path is gone the watch
-                    // stays inactive and the consumer must re-add.
+                    // stays inactive and the consumer must re-add. A
+                    // different returned descriptor means the path holds a
+                    // new inode; the stale one is detached below.
                     int wd = ::inotify_add_watch(impl.fd, entry.path.c_str(), file_watch_mask());
+                    int old_wd = entry.root_wd;
+                    if (old_wd != -1 && wd != old_wd)
+                    {
+                        // The path now holds a different inode (or the re-arm
+                        // failed): the old descriptor still watches the inode
+                        // that used to occupy the path. Its rename-out signals
+                        // were dropped in the overflow window, so detach it
+                        // now or that inode keeps reporting under the old
+                        // path until it dies (a zombie wd).
+                        release_watch(impl, entry, old_wd);
+                        entry.wd_to_path.erase(old_wd);
+                    }
                     if (wd != -1)
                     {
                         entry.root_wd = wd;

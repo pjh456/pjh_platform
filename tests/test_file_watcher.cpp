@@ -811,6 +811,108 @@ TEST_CASE("FileWatcher file watch recovers events lost to an inotify queue overf
     CHECK(has_event(events, FileEventKind::Modified, file));
 }
 
+TEST_CASE("FileWatcher file watch does not report the renamed-away inode after an overflow re-arm")
+{
+    // Zombie wd pin: the file entry's overflow re-arm must detach the
+    // descriptor of the inode that left the path. I1 is renamed away and a
+    // fresh I2 takes the path while the shared queue is full, so the
+    // rename-out records (IN_MOVED_FROM/IN_MOVED_TO/IN_MOVE_SELF and the
+    // re-create) are all dropped; on resync the re-arm resolves the path to
+    // I2 and returns a new descriptor. Pre-fix the old descriptor kept
+    // living on the moved inode with its map entry intact, so later changes
+    // of I1 were delivered under the old path until I1 died. A2b below is
+    // the discriminator: red pre-fix, green post-fix.
+    auto p = make_test_dir();
+    auto file = p / "zombie.txt";
+    auto moved = p / "zombie_moved.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "zombie old").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());     // directory entry, baseline {file}
+    REQUIRE(w.add(file, false).is_ok());  // file entry, descriptor W1
+
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
+
+    // Flood 1: limit + 100 distinct-named creates, no poll(): the shared
+    // queue overflows and stays pinned at full (drop-new), so every record
+    // enqueued until the drain is dropped.
+    for (int i = 0; i < limit + 100; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "zf_%06d", i);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    // Rename-out and re-creation of the path land while the queue is full:
+    // all their records are dropped, so no MovedFrom(file) can be
+    // delivered (the A1 self-check below relies on that).
+    std::error_code ec;
+    std::filesystem::rename(file, moved, ec);
+    REQUIRE_FALSE(ec);
+    REQUIRE(pjh::platform::Fs::write_file(file, "zombie fresh").is_ok());
+
+    // Flood 2: keep the queue full past the rename-out moment.
+    for (int i = 0; i < 200; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "zg_%06d", i);
+        int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    std::vector<FileEvent> all;
+    REQUIRE(drain_until_empty(w, all));
+
+    // A1: self-check that the scenario triggered as designed. A delivered
+    // MovedFrom(file) means the rename-out records survived the full queue
+    // (a drop-oldest kernel policy, unspecified by man7): the scenario is
+    // not constructible on this kernel, so skip the remainder silently
+    // (documented skip, the overflow cases' precedent). A missing
+    // Created(moved) is a loud failure: the resync diff itself is broken.
+    if (has_event(all, FileEventKind::MovedFrom, file))
+        return;
+    CHECK(has_event(all, FileEventKind::Created, moved));
+
+    // A2a: liveness pin — the directory entry still reports the moved inode
+    // after the overflow resync (the watcher survived the overflow).
+    REQUIRE(pjh::platform::Fs::write_file(moved, "zombie moved again").is_ok());
+    auto post = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Modified, moved); });
+    CHECK(has_event(post, FileEventKind::Modified, moved));
+    for (int i = 0; i < 10; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) post.push_back(std::move(e));
+    }
+
+    // A2b: discriminator pin — nothing after the drain may be reported
+    // under the old path. Pre-fix the zombie descriptor delivers
+    // Modified(file) here (red); the resync's own Modified(file) during the
+    // drain is the accepted relaxation and is excluded by scope. CHECK
+    // level so A3 still evaluates on a red run.
+    CHECK_FALSE(
+        std::any_of(post.begin(), post.end(), [&](const FileEvent &e) { return e.path == file; }));
+
+    // A3: re-arm liveness pin — the adopted descriptor must be the
+    // surviving one: a modification of the fresh inode at the path is still
+    // delivered. A reversed implementation (detaching the new descriptor)
+    // deafens the re-arm and fails here.
+    REQUIRE(pjh::platform::Fs::write_file(file, "zombie fresh again").is_ok());
+    auto alive = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Modified, file); });
+    CHECK(has_event(alive, FileEventKind::Modified, file));
+
+    std::filesystem::remove_all(p, ec);
+}
+
 TEST_CASE("FileWatcher removing a recursive watch keeps a separate sub-directory watch alive")
 {
     auto p = make_test_dir();
