@@ -602,6 +602,13 @@ TEST_CASE("FileWatcher Windows raw in-flight read failure probe (temporary diagn
     CloseHandle(port);
     std::error_code ec;
     std::filesystem::remove_all(p, ec);
+
+    // Intentional failure: ctest --output-on-failure prints a case's
+    // captured output only when the case fails, so fail now to surface the
+    // [probe] diagnostics above in the CI log (diagnostic-only; the prints
+    // are the payload, this failure is deliberate).
+    MESSAGE("diagnostic output above");
+    REQUIRE(false);
 }
 #endif
 
