@@ -436,8 +436,8 @@ TEST_CASE("Fs::join concatenates parts with platform separator")
 {
     auto p = Fs::join(std::filesystem::path("a"), "b", "c.txt");
     CHECK_EQ(
-        p.string(), std::filesystem::path("a") / std::filesystem::path("b") /
-                        std::filesystem::path("c.txt"));
+        p.string(),
+        std::filesystem::path("a") / std::filesystem::path("b") / std::filesystem::path("c.txt"));
 
     auto empty = Fs::join(std::filesystem::path("a"));
     CHECK_EQ(empty.string(), std::filesystem::path("a").string());
@@ -484,8 +484,7 @@ TEST_CASE("Fs::relative computes relative path lexically")
 
 TEST_CASE("Fs::relative handles non-existent and unnormalized paths")
 {
-    auto r =
-        Fs::relative(std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
+    auto r = Fs::relative(std::filesystem::path("a/./b/../b"), std::filesystem::path("a/b/c"));
     REQUIRE(r.is_ok());
     CHECK_EQ(r.unwrap().generic_string(), std::filesystem::path("c").generic_string());
 }
@@ -494,15 +493,15 @@ TEST_CASE("Fs::relative fails when paths share no common root")
 {
     if (pjh::platform::Os::is_windows)
     {
-        auto r = Fs::relative(
-            std::filesystem::path("C:\\dir"), std::filesystem::path("D:\\dir\\file"));
+        auto r =
+            Fs::relative(std::filesystem::path("C:\\dir"), std::filesystem::path("D:\\dir\\file"));
         CHECK(r.is_err());
         CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
     }
     else
     {
-        auto r = Fs::relative(
-            std::filesystem::path("relative"), std::filesystem::path("/absolute"));
+        auto r =
+            Fs::relative(std::filesystem::path("relative"), std::filesystem::path("/absolute"));
         CHECK(r.is_err());
         CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
     }

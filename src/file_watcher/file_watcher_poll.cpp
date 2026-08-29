@@ -1,19 +1,18 @@
-#include <pjh_platform/directory_diff.hpp>
-#include <pjh_platform/file_watcher.hpp>
-#include <pjh_platform/platform.hpp>
-
-#include "file_watcher_internal.hpp"
-
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <pjh_platform/directory_diff.hpp>
+#include <pjh_platform/file_watcher.hpp>
+#include <pjh_platform/platform.hpp>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "file_watcher_internal.hpp"
 
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
@@ -44,8 +43,8 @@ namespace pjh::platform
             }
 
             auto emit_if_new(
-                std::vector<FileEvent> &out, FileEventKind kind,
-                const std::filesystem::path &path) -> void
+                std::vector<FileEvent> &out, FileEventKind kind, const std::filesystem::path &path)
+                -> void
             {
                 for (const auto &e : out)
                     if (e.kind == kind && e.path == path)
@@ -54,8 +53,10 @@ namespace pjh::platform
             }
 
             auto diff_and_emit(
-                WatchEntry &entry, const std::filesystem::path &dir,
-                const DirectorySnapshot &before, DirectorySnapshot &&current,
+                WatchEntry &entry,
+                const std::filesystem::path &dir,
+                const DirectorySnapshot &before,
+                DirectorySnapshot &&current,
                 std::vector<FileEvent> &out) -> DirectorySnapshot
             {
                 auto dr = DirectoryDiff::compare(before, current);
@@ -74,8 +75,7 @@ namespace pjh::platform
 
                     for (const auto &ch : diff.changes())
                     {
-                        if (std::find(
-                                suppressed.begin(), suppressed.end(), ch.m_filename) !=
+                        if (std::find(suppressed.begin(), suppressed.end(), ch.m_filename) !=
                             suppressed.end())
                             continue;
                         if (!entry.is_directory && ch.m_full_path != entry.path)
@@ -139,8 +139,7 @@ namespace pjh::platform
                 if (!entry.recursive)
                     return dirs;
                 std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(
-                         entry.watch_root, ec);
+                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
                      it != std::filesystem::recursive_directory_iterator(); ++it)
                 {
                     if (ec)
@@ -157,8 +156,8 @@ namespace pjh::platform
             }
 
             auto resync_directory(
-                WatchEntry &entry, const std::filesystem::path &dir,
-                std::vector<FileEvent> &out) -> void
+                WatchEntry &entry, const std::filesystem::path &dir, std::vector<FileEvent> &out)
+                -> void
             {
                 auto captured = DirectorySnapshot::capture(dir);
                 if (captured.is_err())
@@ -198,8 +197,8 @@ namespace pjh::platform
                 return std::nullopt;
             }
 
-            auto remove_subdir_watches(
-                int fd, WatchEntry &entry, const std::filesystem::path &dir) -> void
+            auto remove_subdir_watches(int fd, WatchEntry &entry, const std::filesystem::path &dir)
+                -> void
             {
                 for (auto it = entry.wd_to_path.begin(); it != entry.wd_to_path.end();)
                 {
@@ -215,15 +214,16 @@ namespace pjh::platform
                 }
             }
 
-            auto resync_linux(
-                FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out) -> void
+            auto resync_linux(FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out)
+                -> void
             {
                 auto current_dirs = tree_dirs(entry);
 
                 // Reconcile the inotify watch set with the live directory tree:
                 // drop watches for directories that are gone, add watches for
                 // directories that appeared while events were being dropped.
-                auto watched = [&entry](const std::filesystem::path &dir) -> bool {
+                auto watched = [&entry](const std::filesystem::path &dir) -> bool
+                {
                     for (const auto &[wd, p] : entry.wd_to_path)
                         if (p == dir)
                             return true;
@@ -252,8 +252,7 @@ namespace pjh::platform
                         entry.wd_to_path[wd] = dir;
                 }
 
-                for (const auto &dir : current_dirs)
-                    resync_directory(entry, dir, out);
+                for (const auto &dir : current_dirs) resync_directory(entry, dir, out);
 
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                 {
@@ -291,8 +290,7 @@ namespace pjh::platform
                 DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
                                FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
                 if (ReadDirectoryChangesW(
-                        entry.handle, entry.buffer.data(),
-                        static_cast<DWORD>(entry.buffer.size()),
+                        entry.handle, entry.buffer.data(), static_cast<DWORD>(entry.buffer.size()),
                         entry.recursive ? TRUE : FALSE, filter, nullptr, &entry.overlapped,
                         nullptr))
                     entry.io_pending = true;
@@ -301,8 +299,7 @@ namespace pjh::platform
             auto resync_windows(WatchEntry &entry, std::vector<FileEvent> &out) -> void
             {
                 auto current_dirs = tree_dirs(entry);
-                for (const auto &dir : current_dirs)
-                    resync_directory(entry, dir, out);
+                for (const auto &dir : current_dirs) resync_directory(entry, dir, out);
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                 {
                     if (std::find(current_dirs.begin(), current_dirs.end(), sit->first) ==
@@ -333,8 +330,7 @@ namespace pjh::platform
                 // keeps that trailing slash, so drop it to make the path compare
                 // equal to the canonical root.
                 std::filesystem::path p = pe.path.lexically_normal();
-                while (p.has_relative_path() && p.filename().empty())
-                    p = p.parent_path();
+                while (p.has_relative_path() && p.filename().empty()) p = p.parent_path();
                 if (!entry.canonical_root.empty())
                 {
                     // FSEvents may coalesce several changes onto the watched
@@ -403,8 +399,8 @@ namespace pjh::platform
                             auto pc = DirectorySnapshot::capture(d.parent_path());
                             if (pc.is_ok())
                                 pit->second = diff_and_emit(
-                                    entry, d.parent_path(), pit->second,
-                                    std::move(pc).unwrap(), out);
+                                    entry, d.parent_path(), pit->second, std::move(pc).unwrap(),
+                                    out);
                         }
                     }
                     entry.snapshots[d] = std::move(current);
@@ -423,8 +419,7 @@ namespace pjh::platform
                 // already diffed above.
                 std::vector<std::filesystem::path> dirs;
                 dirs.reserve(entry.snapshots.size());
-                for (const auto &kv : entry.snapshots)
-                    dirs.push_back(kv.first);
+                for (const auto &kv : entry.snapshots) dirs.push_back(kv.first);
                 for (const auto &dir : dirs)
                 {
                     if (std::find(diffed.begin(), diffed.end(), dir) != diffed.end())
@@ -449,8 +444,7 @@ namespace pjh::platform
                     auto cur = std::move(captured).unwrap();
                     auto dit = entry.snapshots.find(dir);
                     if (dit != entry.snapshots.end())
-                        dit->second = diff_and_emit(
-                            entry, dir, dit->second, std::move(cur), out);
+                        dit->second = diff_and_emit(entry, dir, dit->second, std::move(cur), out);
                 }
             }
         }
@@ -471,8 +465,8 @@ namespace pjh::platform
             DWORD bytes = 0;
             ULONG_PTR key = 0;
             OVERLAPPED *ov = nullptr;
-            BOOL ok = GetQueuedCompletionStatus(
-                impl.port, &bytes, &key, &ov, static_cast<DWORD>(ms));
+            BOOL ok =
+                GetQueuedCompletionStatus(impl.port, &bytes, &key, &ov, static_cast<DWORD>(ms));
             if (!ok)
             {
                 DWORD err = GetLastError();
@@ -490,8 +484,7 @@ namespace pjh::platform
                     break;
                 }
             if (!entry)
-                return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
-                    std::move(out));
+                return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
             // ReadDirectoryChangesW can complete with a failure that still
             // produces a completion packet (a buffer overflow); resolve the
@@ -504,8 +497,8 @@ namespace pjh::platform
                 while (off + sizeof(FILE_NOTIFY_INFORMATION) <=
                        static_cast<std::size_t>(notify_bytes))
                 {
-                    auto *rec = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(
-                        entry->buffer.data() + off);
+                    auto *rec =
+                        reinterpret_cast<FILE_NOTIFY_INFORMATION *>(entry->buffer.data() + off);
                     std::size_t name_chars = rec->FileNameLength / sizeof(wchar_t);
                     std::filesystem::path rel(std::wstring(rec->FileName, name_chars));
                     auto full = entry->watch_root / rel;
@@ -583,13 +576,11 @@ namespace pjh::platform
             long long ms = timeout.count();
             if (ms < 0)
                 ms = 0;
-            for (auto &e : impl.entries)
-                e->pending_events.clear();
+            for (auto &e : impl.entries) e->pending_events.clear();
             // Pump the run loop the FSEvents streams are scheduled on. Events
             // delivered while pumping land in each entry's pending list; anything
             // not delivered by the deadline stays buffered by FSEvents.
-            CFRunLoopRunInMode(
-                kCFRunLoopDefaultMode, static_cast<double>(ms) / 1000.0, true);
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, static_cast<double>(ms) / 1000.0, true);
             for (auto &e : impl.entries)
                 if (!e->pending_events.empty())
                     process_fsevents(*e, out);
@@ -611,10 +602,9 @@ namespace pjh::platform
                 return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
             }
             if (rc == 0)
-                return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
-                    std::move(out));
+                return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
-            std::map<WatchEntry *, std::set<std::filesystem::path>> affected;
+            std::map<WatchEntry *, std::set<std::filesystem::path> > affected;
             alignas(struct inotify_event) unsigned char buf[64 * 1024];
             for (;;)
             {
@@ -641,8 +631,7 @@ namespace pjh::platform
                     // stored baseline snapshot.
                     if (ev->mask & IN_Q_OVERFLOW)
                     {
-                        for (auto &e : impl.entries)
-                            resync_linux(impl, *e, out);
+                        for (auto &e : impl.entries) resync_linux(impl, *e, out);
                         continue;
                     }
 
@@ -676,8 +665,7 @@ namespace pjh::platform
                         {
                             if (ev->mask & IN_CREATE)
                             {
-                                int wd = ::inotify_add_watch(
-                                    impl.fd, full.c_str(), watch_mask());
+                                int wd = ::inotify_add_watch(impl.fd, full.c_str(), watch_mask());
                                 if (wd != -1)
                                     e->wd_to_path[wd] = full;
                                 auto cap = DirectorySnapshot::capture(full);
@@ -722,10 +710,10 @@ namespace pjh::platform
     auto FileWatcher::poll(std::chrono::milliseconds timeout)
         -> pjh::result::Result<std::vector<FileEvent>, ErrorCode>
     {
-    if (!impl_ || impl_->closed)
-        return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
-    auto &impl = *impl_;
-    if (impl.entries.empty())
+        if (!impl_ || impl_->closed)
+            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+        auto &impl = *impl_;
+        if (impl.entries.empty())
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(
                 std::vector<FileEvent>{});
         return detail::platform_poll(impl, timeout);

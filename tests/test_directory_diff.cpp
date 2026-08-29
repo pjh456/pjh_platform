@@ -17,8 +17,8 @@ namespace
 {
     auto make_test_dir(const char *name = "main") -> std::filesystem::path
     {
-        auto p = pjh::platform::Fs::temp_directory() /
-                 (std::string("pjh_platform_diff_test_") + name);
+        auto p =
+            pjh::platform::Fs::temp_directory() / (std::string("pjh_platform_diff_test_") + name);
         std::filesystem::remove_all(p);
         std::filesystem::create_directories(p);
         return p;
@@ -29,9 +29,9 @@ namespace
         DirectoryDiff::ChangeKind kind,
         const std::filesystem::path &full_path) -> bool
     {
-        return std::any_of(changes.begin(), changes.end(), [&](const auto &c) {
-            return c.m_kind == kind && c.m_full_path == full_path;
-        });
+        return std::any_of(
+            changes.begin(), changes.end(),
+            [&](const auto &c) { return c.m_kind == kind && c.m_full_path == full_path; });
     }
 }  // namespace
 
@@ -163,8 +163,7 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
     // (Windows keeps directory last-write-time lazily), so touch it explicitly
     // to guarantee the setup below exercises a changed directory mtime.
     std::error_code ec;
-    std::filesystem::last_write_time(
-        p / "sub", std::filesystem::file_time_type::clock::now(), ec);
+    std::filesystem::last_write_time(p / "sub", std::filesystem::file_time_type::clock::now(), ec);
     REQUIRE_FALSE(ec);
 
     auto after = DirectorySnapshot::capture(p);
@@ -172,8 +171,7 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
 
     auto before_snap = before.unwrap();
     auto after_snap = after.unwrap();
-    REQUIRE_NE(
-        before_snap.get("sub")->m_mtime_ns, after_snap.get("sub")->m_mtime_ns);
+    REQUIRE_NE(before_snap.get("sub")->m_mtime_ns, after_snap.get("sub")->m_mtime_ns);
 
     auto diff = DirectoryDiff::compare(before_snap, after_snap);
     REQUIRE(diff.is_ok());

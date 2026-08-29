@@ -1,11 +1,10 @@
-#include <pjh_platform/directory_snapshot.hpp>
-#include <pjh_platform/platform.hpp>
-
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <fstream>
 #include <iterator>
+#include <pjh_platform/directory_snapshot.hpp>
+#include <pjh_platform/platform.hpp>
 #include <utility>
 
 #if PJH_PLATFORM_WINDOWS
@@ -106,8 +105,7 @@ namespace pjh::platform
     }
 
     auto DirectorySnapshot::capture(
-        const std::filesystem::path &dir,
-        const std::vector<std::filesystem::path> *hash_files)
+        const std::filesystem::path &dir, const std::vector<std::filesystem::path> *hash_files)
         -> pjh::result::Result<DirectorySnapshot, ErrorCode>
     {
         return capture(dir, hash_files, Fnv1a64Hasher{});
@@ -144,8 +142,7 @@ namespace pjh::platform
         {
             hash_names.emplace();
             hash_names->reserve(hash_files->size());
-            for (const auto &p : *hash_files)
-                hash_names->push_back(p.filename());
+            for (const auto &p : *hash_files) hash_names->push_back(p.filename());
         }
 
         DirectorySnapshot snap;
@@ -179,18 +176,17 @@ namespace pjh::platform
             }
             auto mtime = it->last_write_time(sec);
             if (!sec)
-                entry.m_mtime_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    mtime.time_since_epoch())
-                                       .count();
+                entry.m_mtime_ns =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(mtime.time_since_epoch())
+                        .count();
 
             auto filename = it->path().filename();
             if (!entry.m_is_directory && hasher)
             {
                 bool should_hash =
-                    !hash_names ||
-                    std::any_of(
-                        hash_names->begin(), hash_names->end(),
-                        [&filename](const auto &n) { return n == filename; });
+                    !hash_names || std::any_of(
+                                       hash_names->begin(), hash_names->end(),
+                                       [&filename](const auto &n) { return n == filename; });
                 if (should_hash)
                     entry.m_hash = (*hasher)(it->path());
             }
@@ -201,10 +197,7 @@ namespace pjh::platform
         return pjh::result::Result<DirectorySnapshot, ErrorCode>::Ok(std::move(snap));
     }
 
-    auto DirectorySnapshot::dir_path() const -> const std::filesystem::path &
-    {
-        return m_dir_path;
-    }
+    auto DirectorySnapshot::dir_path() const -> const std::filesystem::path & { return m_dir_path; }
 
     auto DirectorySnapshot::file_count() const -> std::size_t
     {
@@ -220,8 +213,7 @@ namespace pjh::platform
             [](const auto &pair) { return pair.second.m_is_directory; });
     }
 
-    auto DirectorySnapshot::get(const std::filesystem::path &filename) const
-        -> std::optional<Entry>
+    auto DirectorySnapshot::get(const std::filesystem::path &filename) const -> std::optional<Entry>
     {
         auto it = m_entries.find(filename);
         if (it == m_entries.end())
@@ -238,8 +230,7 @@ namespace pjh::platform
     {
         std::vector<std::filesystem::path> names;
         names.reserve(m_entries.size());
-        for (const auto &pair : m_entries)
-            names.push_back(pair.first);
+        for (const auto &pair : m_entries) names.push_back(pair.first);
         return names;
     }
 

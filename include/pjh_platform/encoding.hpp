@@ -80,8 +80,8 @@ namespace pjh::platform
             return {};
 
 #if PJH_PLATFORM_WINDOWS
-        int len = MultiByteToWideChar(
-            CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+        int len =
+            MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
         if (len <= 0)
             return {};
         std::wstring result(static_cast<std::size_t>(len), L'\0');
@@ -116,8 +116,7 @@ namespace pjh::platform
                 if (end - it < 3)
                     break;
                 cp = static_cast<char32_t>(c & 0x0F) << 12;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F)
-                      << 6;
+                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F) << 6;
                 cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 2)) & 0x3F);
                 it += 3;
             }
@@ -126,10 +125,8 @@ namespace pjh::platform
                 if (end - it < 4)
                     break;
                 cp = static_cast<char32_t>(c & 0x07) << 18;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F)
-                      << 12;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 2)) & 0x3F)
-                      << 6;
+                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F) << 12;
+                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 2)) & 0x3F) << 6;
                 cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 3)) & 0x3F);
                 it += 4;
             }
@@ -154,14 +151,13 @@ namespace pjh::platform
 
 #if PJH_PLATFORM_WINDOWS
         int len = WideCharToMultiByte(
-            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), nullptr, 0, nullptr,
-            nullptr);
+            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), nullptr, 0, nullptr, nullptr);
         if (len <= 0)
             return {};
         std::string result(static_cast<std::size_t>(len), '\0');
         WideCharToMultiByte(
-            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), result.data(), len,
-            nullptr, nullptr);
+            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), result.data(), len, nullptr,
+            nullptr);
         return result;
 #else
         std::string result;

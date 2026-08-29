@@ -141,8 +141,11 @@ namespace pjh::platform
         /// @brief FSEvents callback entry point; appends raw events to the
         ///        entry's pending list.
         auto fsevents_callback(
-            ConstFSEventStreamRef stream, void *info, size_t num_events,
-            void *event_paths, const FSEventStreamEventFlags event_flags[],
+            ConstFSEventStreamRef stream,
+            void *info,
+            size_t num_events,
+            void *event_paths,
+            const FSEventStreamEventFlags event_flags[],
             const FSEventStreamEventId event_ids[]) -> void;
         /// @brief Creates, schedules and starts the FSEvents stream watching
         ///        `entry.watch_root`. Failure leaves `entry.stream` null.

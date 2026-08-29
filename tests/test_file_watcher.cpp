@@ -12,8 +12,9 @@
 
 #if PJH_PLATFORM_LINUX
 #include <fcntl.h>
-#include <fstream>
 #include <unistd.h>
+
+#include <fstream>
 #endif
 
 using pjh::platform::ErrorCode;
@@ -32,18 +33,16 @@ namespace
     }
 
     auto has_event(
-        const std::vector<FileEvent> &events,
-        FileEventKind kind,
-        const std::filesystem::path &path) -> bool
+        const std::vector<FileEvent> &events, FileEventKind kind, const std::filesystem::path &path)
+        -> bool
     {
-        return std::any_of(events.begin(), events.end(), [&](const FileEvent &e) {
-            return e.kind == kind && e.path == path;
-        });
+        return std::any_of(
+            events.begin(), events.end(),
+            [&](const FileEvent &e) { return e.kind == kind && e.path == path; });
     }
 
     template <typename Pred>
-    auto collect_until(FileWatcher &w, Pred pred, int attempts = 200)
-        -> std::vector<FileEvent>
+    auto collect_until(FileWatcher &w, Pred pred, int attempts = 200) -> std::vector<FileEvent>
     {
         std::vector<FileEvent> all;
         for (int i = 0; i < attempts; ++i)
@@ -52,8 +51,7 @@ namespace
             if (r.is_ok())
             {
                 auto batch = std::move(r).unwrap();
-                for (auto &e : batch)
-                    all.push_back(std::move(e));
+                for (auto &e : batch) all.push_back(std::move(e));
                 if (pred(all))
                     break;
             }
@@ -203,25 +201,41 @@ TEST_CASE("FileWatcher reports file rename")
     collect_until(w, [&](const auto &all) { return has_event(all, FileEventKind::Created, src); });
 
     REQUIRE(pjh::platform::Fs::rename(src, dst).is_ok());
-    auto events = collect_until(w, [&](const auto &all) {
-        bool old_seen = std::any_of(all.begin(), all.end(), [&](const FileEvent &e) {
+    auto events = collect_until(
+        w,
+        [&](const auto &all)
+        {
+            bool old_seen = std::any_of(
+                all.begin(), all.end(),
+                [&](const FileEvent &e)
+                {
+                    return (e.kind == FileEventKind::MovedFrom ||
+                            e.kind == FileEventKind::Deleted) &&
+                           e.path == src;
+                });
+            bool new_seen = std::any_of(
+                all.begin(), all.end(),
+                [&](const FileEvent &e)
+                {
+                    return (e.kind == FileEventKind::MovedTo || e.kind == FileEventKind::Created) &&
+                           e.path == dst;
+                });
+            return old_seen && new_seen;
+        });
+    bool old_seen = std::any_of(
+        events.begin(), events.end(),
+        [&](const FileEvent &e)
+        {
             return (e.kind == FileEventKind::MovedFrom || e.kind == FileEventKind::Deleted) &&
                    e.path == src;
         });
-        bool new_seen = std::any_of(all.begin(), all.end(), [&](const FileEvent &e) {
+    bool new_seen = std::any_of(
+        events.begin(), events.end(),
+        [&](const FileEvent &e)
+        {
             return (e.kind == FileEventKind::MovedTo || e.kind == FileEventKind::Created) &&
                    e.path == dst;
         });
-        return old_seen && new_seen;
-    });
-    bool old_seen = std::any_of(events.begin(), events.end(), [&](const FileEvent &e) {
-        return (e.kind == FileEventKind::MovedFrom || e.kind == FileEventKind::Deleted) &&
-               e.path == src;
-    });
-    bool new_seen = std::any_of(events.begin(), events.end(), [&](const FileEvent &e) {
-        return (e.kind == FileEventKind::MovedTo || e.kind == FileEventKind::Created) &&
-               e.path == dst;
-    });
     CHECK(old_seen);
     CHECK(new_seen);
 }
@@ -277,8 +291,7 @@ TEST_CASE("FileWatcher recovers events lost to an inotify queue overflow")
 
     auto file = p / "burst.txt";
     REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
-    collect_until(
-        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    collect_until(w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
 
     // Flood the inotify queue with far more IN_MODIFY events than it can hold.
     // The kernel discards the surplus and queues a single IN_Q_OVERFLOW marker;

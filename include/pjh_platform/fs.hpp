@@ -420,8 +420,8 @@ namespace pjh::platform
          * @platform All supported platforms.
          */
         template <typename... Parts>
-        [[nodiscard]] static auto join(
-            const std::filesystem::path &base, Parts &&...parts) -> std::filesystem::path
+        [[nodiscard]] static auto join(const std::filesystem::path &base, Parts &&...parts)
+            -> std::filesystem::path
         {
             std::filesystem::path result = base;
             ((result /= std::filesystem::path(std::forward<Parts>(parts))), ...);
@@ -448,8 +448,7 @@ namespace pjh::platform
          * @platform All supported platforms; UTF-8 regardless of the native
          *           wide encoding.
          */
-        [[nodiscard]] static auto extension(const std::filesystem::path &p)
-            -> std::string;
+        [[nodiscard]] static auto extension(const std::filesystem::path &p) -> std::string;
 
         /**
          * @brief Returns the filename of @p p without its extension.

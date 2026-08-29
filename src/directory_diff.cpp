@@ -1,5 +1,4 @@
 #include <pjh_platform/directory_diff.hpp>
-
 #include <utility>
 #include <vector>
 
@@ -7,8 +6,8 @@ namespace pjh::platform
 {
     namespace
     {
-        auto entries_match(
-            const DirectorySnapshot::Entry &x, const DirectorySnapshot::Entry &y) -> bool
+        auto entries_match(const DirectorySnapshot::Entry &x, const DirectorySnapshot::Entry &y)
+            -> bool
         {
             if (x.m_hash && y.m_hash)
                 return *x.m_hash == *y.m_hash;
@@ -16,8 +15,7 @@ namespace pjh::platform
         }
     }  // namespace
 
-    auto DirectoryDiff::compare(
-        const DirectorySnapshot &before, const DirectorySnapshot &after)
+    auto DirectoryDiff::compare(const DirectorySnapshot &before, const DirectorySnapshot &after)
         -> pjh::result::Result<DirectoryDiff, ErrorCode>
     {
         if (before.dir_path() != after.dir_path())
@@ -48,19 +46,12 @@ namespace pjh::platform
             }
         }
 
-        return pjh::result::Result<DirectoryDiff, ErrorCode>::Ok(
-            DirectoryDiff{std::move(changes)});
+        return pjh::result::Result<DirectoryDiff, ErrorCode>::Ok(DirectoryDiff{std::move(changes)});
     }
 
-    auto DirectoryDiff::changes() const -> const std::vector<Change> &
-    {
-        return m_changes;
-    }
+    auto DirectoryDiff::changes() const -> const std::vector<Change> & { return m_changes; }
 
-    auto DirectoryDiff::empty() const -> bool
-    {
-        return m_changes.empty();
-    }
+    auto DirectoryDiff::empty() const -> bool { return m_changes.empty(); }
 
     auto DirectoryDiff::detect_renames(
         const DirectorySnapshot &before, const DirectorySnapshot &after) const
@@ -103,9 +94,6 @@ namespace pjh::platform
         return renames;
     }
 
-    DirectoryDiff::DirectoryDiff(std::vector<Change> changes)
-        : m_changes(std::move(changes))
-    {
-    }
+    DirectoryDiff::DirectoryDiff(std::vector<Change> changes) : m_changes(std::move(changes)) {}
 
 }  // namespace pjh::platform

@@ -35,8 +35,7 @@ namespace pjh::platform
             ///        recursive watches, of every subdirectory below it. A
             ///        failure to capture the root aborts the registration;
             ///        per-subdirectory captures are best-effort.
-            auto capture_baselines(WatchEntry &entry)
-                -> pjh::result::Result<void, ErrorCode>
+            auto capture_baselines(WatchEntry &entry) -> pjh::result::Result<void, ErrorCode>
             {
                 entry.snapshots.clear();
                 auto root_cap = DirectorySnapshot::capture(entry.watch_root);
@@ -48,8 +47,7 @@ namespace pjh::platform
                     return pjh::result::Result<void, ErrorCode>::Ok();
 
                 std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(
-                         entry.watch_root, ec);
+                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
                      it != std::filesystem::recursive_directory_iterator(); ++it)
                 {
                     if (ec)
@@ -125,8 +123,7 @@ namespace pjh::platform
             if (entry.recursive)
             {
                 std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(
-                         entry.watch_root, ec);
+                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
                      it != std::filesystem::recursive_directory_iterator(); ++it)
                 {
                     if (ec)
@@ -164,8 +161,7 @@ namespace pjh::platform
             if (entry.recursive)
             {
                 std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(
-                         entry.watch_root, ec);
+                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
                      it != std::filesystem::recursive_directory_iterator(); ++it)
                 {
                     if (ec)

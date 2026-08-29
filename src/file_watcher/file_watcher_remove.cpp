@@ -15,8 +15,7 @@ namespace pjh::platform
 {
     namespace detail
     {
-        auto unregister_watch([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry)
-            -> void
+        auto unregister_watch([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> void
         {
 #if PJH_PLATFORM_WINDOWS
             if (entry.handle != INVALID_HANDLE_VALUE)
@@ -32,8 +31,7 @@ namespace pjh::platform
                         DWORD bytes = 0;
                         ULONG_PTR key = 0;
                         OVERLAPPED *ov = nullptr;
-                        BOOL ok =
-                            GetQueuedCompletionStatus(impl.port, &bytes, &key, &ov, 0);
+                        BOOL ok = GetQueuedCompletionStatus(impl.port, &bytes, &key, &ov, 0);
                         if (!ok)
                             break;
                         if (key == reinterpret_cast<ULONG_PTR>(&entry))

@@ -15,8 +15,8 @@ namespace
 {
     auto make_test_dir(const char *name = "main") -> std::filesystem::path
     {
-        auto p = pjh::platform::Fs::temp_directory() /
-                 (std::string("pjh_platform_status_test_") + name);
+        auto p =
+            pjh::platform::Fs::temp_directory() / (std::string("pjh_platform_status_test_") + name);
         std::filesystem::remove_all(p);
         std::filesystem::create_directories(p);
         return p;
@@ -59,23 +59,22 @@ TEST_CASE("DirectoryStatus groups files by extension")
     auto summaries = status.extension_summaries();
     REQUIRE_EQ(summaries.size(), 3u);
 
-    auto txt = std::find_if(summaries.begin(), summaries.end(), [](const auto &s) {
-        return s.m_extension == std::filesystem::path(".txt");
-    });
+    auto txt = std::find_if(
+        summaries.begin(), summaries.end(),
+        [](const auto &s) { return s.m_extension == std::filesystem::path(".txt"); });
     REQUIRE(txt != summaries.end());
     CHECK_EQ(txt->m_file_count, 2u);
     CHECK_EQ(txt->m_total_size, 10u);
 
-    auto cpp = std::find_if(summaries.begin(), summaries.end(), [](const auto &s) {
-        return s.m_extension == std::filesystem::path(".cpp");
-    });
+    auto cpp = std::find_if(
+        summaries.begin(), summaries.end(),
+        [](const auto &s) { return s.m_extension == std::filesystem::path(".cpp"); });
     REQUIRE(cpp != summaries.end());
     CHECK_EQ(cpp->m_file_count, 1u);
     CHECK_EQ(cpp->m_total_size, 2u);
 
-    auto noext = std::find_if(summaries.begin(), summaries.end(), [](const auto &s) {
-        return s.m_extension.empty();
-    });
+    auto noext = std::find_if(
+        summaries.begin(), summaries.end(), [](const auto &s) { return s.m_extension.empty(); });
     REQUIRE(noext != summaries.end());
     CHECK_EQ(noext->m_file_count, 1u);
     CHECK_EQ(noext->m_total_size, 3u);

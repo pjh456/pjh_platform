@@ -118,8 +118,7 @@ namespace pjh::platform
          * @platform All supported platforms.
          */
         [[nodiscard]] static auto capture(
-            const std::filesystem::path &dir,
-            const std::vector<std::filesystem::path> *hash_files)
+            const std::filesystem::path &dir, const std::vector<std::filesystem::path> *hash_files)
             -> pjh::result::Result<DirectorySnapshot, ErrorCode>;
 
         /**
@@ -146,7 +145,10 @@ namespace pjh::platform
             const std::vector<std::filesystem::path> *hash_files,
             Hasher hasher) -> pjh::result::Result<DirectorySnapshot, ErrorCode>
         {
-            HashFn fn = [hasher](const std::filesystem::path &p) { return hasher(p); };
+            HashFn fn = [hasher](const std::filesystem::path &p)
+            {
+                return hasher(p);
+            };
             return capture_impl(dir, hash_files, std::optional<HashFn>{std::move(fn)});
         }
 
@@ -160,8 +162,7 @@ namespace pjh::platform
         [[nodiscard]] auto dir_count() const -> std::size_t;
 
         /// @brief Returns the entry for @p filename (a basename), or `nullopt`.
-        [[nodiscard]] auto get(const std::filesystem::path &filename) const
-            -> std::optional<Entry>;
+        [[nodiscard]] auto get(const std::filesystem::path &filename) const -> std::optional<Entry>;
 
         /// @brief Whether @p filename (a basename) is present in this snapshot.
         [[nodiscard]] auto contains(const std::filesystem::path &filename) const -> bool;
@@ -173,8 +174,7 @@ namespace pjh::platform
         [[nodiscard]] auto entries() const -> const EntryMap &;
 
     private:
-        using HashFn =
-            std::function<std::optional<FileHash>(const std::filesystem::path &)>;
+        using HashFn = std::function<std::optional<FileHash>(const std::filesystem::path &)>;
 
         [[nodiscard]] static auto capture_impl(
             const std::filesystem::path &dir,

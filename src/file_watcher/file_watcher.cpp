@@ -26,10 +26,7 @@ namespace pjh::platform
 #endif
     }
 
-    FileWatcher::~FileWatcher()
-    {
-        close();
-    }
+    FileWatcher::~FileWatcher() { close(); }
 
     FileWatcher::FileWatcher(FileWatcher &&) noexcept = default;
 
@@ -41,8 +38,7 @@ namespace pjh::platform
             return;
         impl_->closed = true;
 
-        for (auto &entry : impl_->entries)
-            detail::unregister_watch(*impl_, *entry);
+        for (auto &entry : impl_->entries) detail::unregister_watch(*impl_, *entry);
         impl_->entries.clear();
 
 #if PJH_PLATFORM_WINDOWS

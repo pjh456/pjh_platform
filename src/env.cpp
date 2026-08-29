@@ -43,9 +43,7 @@ namespace pjh::platform
                 std::string_view entry(*env);
                 auto eq = entry.find('=');
                 if (eq != std::string_view::npos)
-                    func(
-                        std::string(entry.substr(0, eq)),
-                        std::string(entry.substr(eq + 1)));
+                    func(std::string(entry.substr(0, eq)), std::string(entry.substr(eq + 1)));
             }
 #endif
         }
@@ -107,8 +105,7 @@ namespace pjh::platform
     auto Env::snapshot() -> std::unordered_map<std::string, std::string>
     {
         std::unordered_map<std::string, std::string> m;
-        for_each_env_entry([&](auto &&k, auto &&v)
-                           { m.emplace(std::move(k), std::move(v)); });
+        for_each_env_entry([&](auto &&k, auto &&v) { m.emplace(std::move(k), std::move(v)); });
         return m;
     }
 

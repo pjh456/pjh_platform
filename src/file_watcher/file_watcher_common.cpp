@@ -1,10 +1,9 @@
+#include <cerrno>
+#include <filesystem>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
 
 #include "file_watcher_internal.hpp"
-
-#include <cerrno>
-#include <filesystem>
 
 #if PJH_PLATFORM_LINUX
 #include <sys/inotify.h>
@@ -92,8 +91,12 @@ namespace pjh::platform::detail
 
 #if PJH_PLATFORM_MACOS
     auto fsevents_callback(
-        ConstFSEventStreamRef, void *info, size_t num_events, void *event_paths,
-        const FSEventStreamEventFlags event_flags[], const FSEventStreamEventId[]) -> void
+        ConstFSEventStreamRef,
+        void *info,
+        size_t num_events,
+        void *event_paths,
+        const FSEventStreamEventFlags event_flags[],
+        const FSEventStreamEventId[]) -> void
     {
         auto *entry = static_cast<WatchEntry *>(info);
         if (!entry)
@@ -114,8 +117,8 @@ namespace pjh::platform::detail
         if (!cf_path)
             return;
         const void *cf_paths_values[] = {cf_path};
-        CFArrayRef cf_paths = CFArrayCreate(
-            kCFAllocatorDefault, cf_paths_values, 1, &kCFTypeArrayCallBacks);
+        CFArrayRef cf_paths =
+            CFArrayCreate(kCFAllocatorDefault, cf_paths_values, 1, &kCFTypeArrayCallBacks);
         CFRelease(cf_path);
         if (!cf_paths)
             return;
@@ -132,8 +135,8 @@ namespace pjh::platform::detail
 #endif
 
         FSEventStreamRef stream = FSEventStreamCreate(
-            kCFAllocatorDefault, &fsevents_callback, &ctx, cf_paths,
-            kFSEventStreamEventIdSinceNow, 0.0, flags);
+            kCFAllocatorDefault, &fsevents_callback, &ctx, cf_paths, kFSEventStreamEventIdSinceNow,
+            0.0, flags);
         CFRelease(cf_paths);
         if (!stream)
             return;

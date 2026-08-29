@@ -210,9 +210,8 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     std::error_code ec;
     auto mtime = std::filesystem::last_write_time(p / "data.bin", ec);
     REQUIRE_FALSE(ec);
-    auto expected_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                           mtime.time_since_epoch())
-                           .count();
+    auto expected_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(mtime.time_since_epoch()).count();
 
     auto r = DirectorySnapshot::capture(p);
     REQUIRE(r.is_ok());

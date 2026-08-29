@@ -23,10 +23,7 @@ TEST_CASE("Os::is_* constants — exactly one OS is detected")
         CHECK(Os::is_posix);
 }
 
-TEST_CASE("Os::is_64bit matches pointer width")
-{
-    CHECK_EQ(Os::is_64bit, sizeof(void *) == 8);
-}
+TEST_CASE("Os::is_64bit matches pointer width") { CHECK_EQ(Os::is_64bit, sizeof(void *) == 8); }
 
 TEST_CASE("Os::arch_name is a known value")
 {

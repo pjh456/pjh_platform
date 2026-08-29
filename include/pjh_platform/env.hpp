@@ -109,8 +109,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto snapshot()
-            -> std::unordered_map<std::string, std::string>;
+        [[nodiscard]] static auto snapshot() -> std::unordered_map<std::string, std::string>;
 
         /**
          * @brief Returns the entire environment as an ordered list.
@@ -127,8 +126,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        [[nodiscard]] static auto list()
-            -> std::vector<std::pair<std::string, std::string>>;
+        [[nodiscard]] static auto list() -> std::vector<std::pair<std::string, std::string>>;
     };
 
 }  // namespace pjh::platform
