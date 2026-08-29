@@ -10,8 +10,8 @@ namespace pjh::platform
     ///
     /// @details Functions that can fail return
     ///          `pjh::result::Result<T, ErrorCode>` and never throw platform
-    ///          errors. The codes are mapped from the underlying OS error via
-    ///          `Fs`'s internal mapping (`errno` / `GetLastError` /
+    ///          errors. The codes are mapped from the underlying OS error by
+    ///          the library-internal mapping (`errno` / `GetLastError` /
     ///          `std::error_code`).
     ///
     /// @platform Windows, Linux, macOS.
