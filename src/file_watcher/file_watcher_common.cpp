@@ -87,6 +87,15 @@ namespace pjh::platform::detail
         return static_cast<std::uint32_t>(
             IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO);
     }
+
+    auto file_watch_mask() -> std::uint32_t
+    {
+        // A single file watched directly on its own inode only ever receives
+        // the self-deletion/move-out signals for its deletion or rename-out;
+        // directory watches keep the plain mask (their "watched directory was
+        // removed" behavior stays unchanged).
+        return watch_mask() | IN_DELETE_SELF | IN_MOVE_SELF;
+    }
 #endif
 
 #if PJH_PLATFORM_MACOS

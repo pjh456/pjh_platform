@@ -96,15 +96,22 @@ namespace pjh::platform
             bool is_directory = false;
             bool recursive = false;
             /// @brief Directory that holds the actual watch (the parent of a
-            ///        watched file, or the directory itself).
+            ///        watched file, or the directory itself). For a file entry
+            ///        the Linux implementation watches the file itself and does
+            ///        not consume `watch_root`; it is kept for cross-platform
+            ///        symmetry with the Windows/macOS entries.
             std::filesystem::path watch_root;
 
             int root_wd = -1;
-            /// @brief Maps an `inotify` watch descriptor to the directory it
-            ///        watches (root and, when recursive, each subdirectory).
+            /// @brief Maps an `inotify` watch descriptor to the path it
+            ///        watches: for directory entries the root and (when
+            ///        recursive) each subdirectory; for file entries the
+            ///        watched file itself.
             std::unordered_map<int, std::filesystem::path> wd_to_path;
             /// @brief Baseline snapshot per directory under `watch_root`, used
             ///        to recover events lost when the inotify queue overflows.
+            ///        Always empty for file entries, which watch their file
+            ///        directly and have no directory baseline.
             std::map<std::filesystem::path, DirectorySnapshot> snapshots;
         };
 #endif
@@ -127,6 +134,10 @@ namespace pjh::platform
 #if PJH_PLATFORM_LINUX
         /// @brief Bitmask of the `inotify` events that map to `FileEventKind`.
         [[nodiscard]] auto watch_mask() -> std::uint32_t;
+        /// @brief `inotify` mask for a single file watched directly on its own
+        ///        inode: `watch_mask()` plus the self-deletion/move-out
+        ///        signals.
+        [[nodiscard]] auto file_watch_mask() -> std::uint32_t;
 #endif
 
 #if PJH_PLATFORM_MACOS

@@ -216,6 +216,37 @@ namespace pjh::platform
             auto resync_linux(FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out)
                 -> void
             {
+                if (!entry.is_directory)
+                {
+                    // A direct file watch has no directory baseline to diff
+                    // against; the net change lost in the overflow window is at
+                    // most one Modified (the file is still there) or one Deleted
+                    // (it is gone). Same accepted relaxation as the baseline
+                    // recovery below: when the overflow was triggered by another
+                    // entry sharing the inotify queue, an unchanged file may
+                    // be reported Modified once.
+                    std::error_code ec;
+                    if (std::filesystem::exists(entry.path, ec) && !ec)
+                        emit_if_new(out, FileEventKind::Modified, entry.path);
+                    else
+                        emit_if_new(out, FileEventKind::Deleted, entry.path);
+                    // Re-attach the watch to whatever inode now occupies the
+                    // path (idempotent for a still-live watch, which returns
+                    // the existing descriptor). If the path is gone the watch
+                    // stays inactive and the consumer must re-add.
+                    int wd = ::inotify_add_watch(impl.fd, entry.path.c_str(), file_watch_mask());
+                    if (wd != -1)
+                    {
+                        entry.root_wd = wd;
+                        entry.wd_to_path[wd] = entry.path;
+                    }
+                    else
+                    {
+                        entry.root_wd = -1;
+                    }
+                    return;
+                }
+
                 // Baselines are taken at add() time and only refreshed by an
                 // earlier resync, so this diff runs against a possibly stale
                 // baseline and may re-report changes that were already
@@ -648,9 +679,24 @@ namespace pjh::platform
                         auto wit = e->wd_to_path.find(ev->wd);
                         if (wit == e->wd_to_path.end())
                             continue;
+                        if (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF))
+                        {
+                            // The only deletion/move-out signal a direct file
+                            // watch receives; the kernel usually combines it
+                            // with IN_IGNORED in the same record, so it must
+                            // be emitted before the erasure below runs.
+                            auto kind = (ev->mask & IN_DELETE_SELF) ? FileEventKind::Deleted
+                                                                    : FileEventKind::MovedFrom;
+                            FileEvent fe{kind, wit->second, std::nullopt};
+                            if (kind == FileEventKind::MovedFrom)
+                                fe.cookie = static_cast<std::uint32_t>(ev->cookie);
+                            out.push_back(std::move(fe));
+                        }
                         if (ev->mask & IN_IGNORED)
                         {
                             auto gone = wit->second;
+                            if (wit->first == e->root_wd)
+                                e->root_wd = -1;
                             e->wd_to_path.erase(wit);
                             prune_snapshots(*e, gone);
                             continue;

@@ -175,6 +175,55 @@ TEST_CASE("FileWatcher watching a file only reports that file")
     }
 }
 
+TEST_CASE("FileWatcher file watch reports deletion of the watched file")
+{
+    auto p = make_test_dir();
+    auto file = p / "doomed_watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "content").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(file, false).is_ok());
+
+    REQUIRE(std::filesystem::remove(file));
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Deleted, file); });
+    CHECK(has_event(events, FileEventKind::Deleted, file));
+}
+
+TEST_CASE("FileWatcher file watch reports rename of the watched file")
+{
+    auto p = make_test_dir();
+    auto src = p / "old_watched.txt";
+    auto dst = p / "new_watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(src, "content").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(src, false).is_ok());
+
+    REQUIRE(pjh::platform::Fs::rename(src, dst).is_ok());
+    auto events = collect_until(
+        w,
+        [&](const auto &all)
+        {
+            return std::any_of(
+                all.begin(), all.end(),
+                [&](const FileEvent &e)
+                {
+                    return (e.kind == FileEventKind::MovedFrom ||
+                            e.kind == FileEventKind::Deleted) &&
+                           e.path == src;
+                });
+        });
+    CHECK(
+        std::any_of(
+            events.begin(), events.end(),
+            [&](const FileEvent &e)
+            {
+                return (e.kind == FileEventKind::MovedFrom || e.kind == FileEventKind::Deleted) &&
+                       e.path == src;
+            }));
+}
+
 TEST_CASE("FileWatcher recursive watch reports events in subdirectories")
 {
     auto p = make_test_dir();
@@ -260,6 +309,53 @@ TEST_CASE("FileWatcher remove stops watching")
     CHECK_FALSE(has_event(events, FileEventKind::Created, file));
 }
 
+TEST_CASE("FileWatcher removing a directory watch keeps the file watch alive")
+{
+    auto p = make_test_dir();
+    auto file = p / "shared_watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "content").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+    REQUIRE(w.add(file, false).is_ok());
+    CHECK(w.remove(p).is_ok());
+
+    // The file watch must survive the removal of the sibling directory watch.
+    REQUIRE(pjh::platform::Fs::write_file(file, "updated content").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
+    CHECK(has_event(events, FileEventKind::Modified, file));
+
+    // ...and it must still filter sibling changes.
+    auto sibling = p / "sibling_after_dir_remove.txt";
+    REQUIRE(pjh::platform::Fs::write_file(sibling, "x").is_ok());
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (const auto &e : r.unwrap()) CHECK(e.path != sibling);
+    }
+}
+
+TEST_CASE("FileWatcher removing a file watch keeps the directory watch alive")
+{
+    auto p = make_test_dir();
+    auto file = p / "shared_watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "content").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+    REQUIRE(w.add(file, false).is_ok());
+    CHECK(w.remove(file).is_ok());
+
+    // The directory watch must survive the removal of the sibling file watch.
+    auto created = p / "created_after_file_remove.txt";
+    REQUIRE(pjh::platform::Fs::write_file(created, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, created); });
+    CHECK(has_event(events, FileEventKind::Created, created));
+}
+
 TEST_CASE("FileWatcher close is idempotent and releases resources")
 {
     auto p = make_test_dir();
@@ -299,6 +395,88 @@ TEST_CASE("FileWatcher recovers events lost to an inotify queue overflow")
     // Flood the inotify queue with far more IN_MODIFY events than it can hold.
     // The kernel discards the surplus and queues a single IN_Q_OVERFLOW marker;
     // the modifications must then be recovered from the snapshot diff.
+    std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
+    int limit = 0;
+    if (!(limit_file >> limit) || limit <= 0)
+        return;  // cannot determine the queue size; skip
+
+    int fd = ::open(file.c_str(), O_WRONLY | O_APPEND);
+    REQUIRE(fd >= 0);
+    char chunk[64] = {};
+    for (int i = 0; i < limit + 200; ++i)
+    {
+        ssize_t rc = ::write(fd, chunk, sizeof(chunk));
+        REQUIRE(rc == static_cast<ssize_t>(sizeof(chunk)));
+    }
+    ::close(fd);
+
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
+    CHECK(has_event(events, FileEventKind::Modified, file));
+}
+
+TEST_CASE("FileWatcher Linux file watch ignores rename-in and stays inactive after the file moves")
+{
+    auto p = make_test_dir();
+    auto file = p / "watched.txt";
+    auto moved = p / "moved.txt";
+    auto other = p / "other.txt";
+    auto other2 = p / "other2.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "content").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(other, "seed").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(other2, "seed2").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(file, false).is_ok());
+
+    // Prime the watch so the rename-out below is the first removal event.
+    REQUIRE(pjh::platform::Fs::write_file(file, "primed").is_ok());
+    collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
+
+    // 1) Renaming the watched file away reports MovedFrom.
+    std::error_code ec;
+    std::filesystem::rename(file, moved, ec);
+    REQUIRE_FALSE(ec);
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::MovedFrom, file); });
+    CHECK(has_event(events, FileEventKind::MovedFrom, file));
+
+    // 2) Renaming a different file onto the watched path is NOT reported:
+    // the inotify watch follows the original inode and died with the rename.
+    std::filesystem::rename(other2, file, ec);
+    REQUIRE_FALSE(ec);
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (const auto &e : r.unwrap()) CHECK(e.path != file);
+    }
+
+    // 3) Modifying the fresh file now occupying the path is NOT reported
+    // either; the watch stays inactive until the consumer re-adds it.
+    REQUIRE(pjh::platform::Fs::write_file(file, "fresh content").is_ok());
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (const auto &e : r.unwrap()) CHECK(e.path != file);
+    }
+}
+
+TEST_CASE("FileWatcher file watch recovers events lost to an inotify queue overflow")
+{
+    auto p = make_test_dir();
+    auto file = p / "burst_watched.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(file, false).is_ok());
+
+    // Flood the inotify queue with far more IN_MODIFY events on the watched
+    // file itself than it can hold; the kernel discards the surplus and
+    // queues a single IN_Q_OVERFLOW marker, after which the modification
+    // must still be reported (directly or via the resync stat fallback).
     std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
     int limit = 0;
     if (!(limit_file >> limit) || limit <= 0)
@@ -399,6 +577,10 @@ TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
 
     // S3: file watch, sibling churn only (the watched file is untouched); the
     // filter must drop every event, so the drain is expected to see none.
+    // On Linux the file watch is attached to the file itself, so no sibling
+    // event ever reaches the inotify queue and the drain is a plain 10 ms
+    // timeout; on Windows/macOS the parent-directory filter still has to read
+    // and discard every sibling event.
     {
         auto file = p / "sib_watched.txt";
         REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());

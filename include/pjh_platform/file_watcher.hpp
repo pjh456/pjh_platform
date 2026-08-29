@@ -61,7 +61,13 @@ namespace pjh::platform
     ///
     /// @details Watches files and directories and reports changes through
     ///          `poll()`. Under the hood:
-    ///          - Linux uses `inotify`.
+    ///          - Linux uses `inotify`. A single file is watched directly on
+    ///            the file itself: the watch follows the file's inode, so a
+    ///            file renamed into the watched path is not reported, and a
+    ///            deleted or renamed-away file leaves the watch inactive until
+    ///            it is removed with `remove` and re-added. Sibling changes in
+    ///            the parent directory generate no events at all, and each
+    ///            file watch consumes one inotify watch slot.
     ///          - macOS uses `FSEvents` with file-level events, scheduled on the
     ///            current thread's run loop; individual changes are inferred by
     ///            diffing directory snapshots, so no file descriptors are held
@@ -69,11 +75,11 @@ namespace pjh::platform
     ///          - Windows uses `ReadDirectoryChangesW` over an I/O completion
     ///            port.
     ///
-    ///          Watching a single file is implemented by watching its parent
-    ///          directory and discarding unrelated events. On high-churn
-    ///          directories (for example `/tmp`) this filter work grows with
-    ///          the directory's change rate, so prefer watching the file's own
-    ///          dedicated directory when possible.
+    ///          On Windows and macOS a single file is implemented by watching
+    ///          its parent directory and discarding unrelated events. On
+    ///          high-churn directories (for example `/tmp`) this filter work
+    ///          grows with the directory's change rate, so prefer watching the
+    ///          file's own dedicated directory when possible.
     ///
     /// @warning Not thread-safe; concurrent calls from multiple threads need
     ///          external synchronization.
@@ -113,11 +119,12 @@ namespace pjh::platform
         /**
          * @brief Starts watching @p path (a file or a directory).
          *
-         * @details The path is normalized to an absolute path first. Files are
-         *          watched through their parent directory; directories are
-         *          watched directly. For directories, @p recursive controls
-         *          whether subdirectories are watched too; the flag is ignored
-         *          when @p path is a file.
+         * @details The path is normalized to an absolute path first. On Linux
+         *          a file is watched directly on its own inode; on Windows
+         *          and macOS a file is watched through its parent directory.
+         *          Directories are watched directly. For directories,
+         *          @p recursive controls whether subdirectories are watched
+         *          too; the flag is ignored when @p path is a file.
          *
          * @param path Path to watch.
          * @param recursive Watch subdirectories recursively (directories only).

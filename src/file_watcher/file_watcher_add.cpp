@@ -149,33 +149,51 @@ namespace pjh::platform
             if (impl.fd == -1)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
 
-            auto baselines = capture_baselines(entry);
-            if (baselines.is_err())
-                return pjh::result::Failure<ErrorCode>{baselines.unwrap_err()};
-
-            entry.root_wd = ::inotify_add_watch(impl.fd, entry.watch_root.c_str(), watch_mask());
-            if (entry.root_wd == -1)
-                return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
-            entry.wd_to_path[entry.root_wd] = entry.watch_root;
-
-            if (entry.recursive)
+            if (entry.is_directory)
             {
-                std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
-                     it != std::filesystem::recursive_directory_iterator(); ++it)
+                auto baselines = capture_baselines(entry);
+                if (baselines.is_err())
+                    return pjh::result::Failure<ErrorCode>{baselines.unwrap_err()};
+
+                entry.root_wd =
+                    ::inotify_add_watch(impl.fd, entry.watch_root.c_str(), watch_mask());
+                if (entry.root_wd == -1)
+                    return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
+                entry.wd_to_path[entry.root_wd] = entry.watch_root;
+
+                if (entry.recursive)
                 {
-                    if (ec)
+                    std::error_code ec;
+                    for (auto it =
+                             std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
+                         it != std::filesystem::recursive_directory_iterator(); ++it)
                     {
-                        ec.clear();
-                        continue;
+                        if (ec)
+                        {
+                            ec.clear();
+                            continue;
+                        }
+                        std::error_code sec;
+                        if (!it->is_directory(sec))
+                            continue;
+                        int wd = ::inotify_add_watch(impl.fd, it->path().c_str(), watch_mask());
+                        if (wd != -1)
+                            entry.wd_to_path[wd] = it->path();
                     }
-                    std::error_code sec;
-                    if (!it->is_directory(sec))
-                        continue;
-                    int wd = ::inotify_add_watch(impl.fd, it->path().c_str(), watch_mask());
-                    if (wd != -1)
-                        entry.wd_to_path[wd] = it->path();
                 }
+            }
+            else
+            {
+                // The single file is watched directly on its own inode, which
+                // keeps sibling churn entirely out of the inotify queue. The
+                // trade-offs (a rename into the path is not reported; a
+                // deleted or moved file leaves the watch inactive until it is
+                // re-added) are documented in file_watcher.hpp. No baseline
+                // snapshots: the file entry has no directory to capture.
+                entry.root_wd = ::inotify_add_watch(impl.fd, entry.path.c_str(), file_watch_mask());
+                if (entry.root_wd == -1)
+                    return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
+                entry.wd_to_path[entry.root_wd] = entry.path;
             }
             return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
