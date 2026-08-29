@@ -64,7 +64,7 @@ jobs:
           CXX: ${{ matrix.cxx }}
           CMAKE_C_COMPILER_LAUNCHER: ${{ matrix.ccache_variant }}
           CMAKE_CXX_COMPILER_LAUNCHER: ${{ matrix.ccache_variant }}
-        run: cmake -B build -G Ninja ${{ matrix.cmake_args }}
+        run: cmake -B build -G Ninja -DPJH_PLATFORM_BUILD_EXAMPLES=ON ${{ matrix.cmake_args }}
 
       - name: Build
         run: cmake --build build --parallel
