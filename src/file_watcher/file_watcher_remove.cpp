@@ -15,6 +15,18 @@ namespace pjh::platform
 {
     namespace detail
     {
+#if PJH_PLATFORM_WINDOWS
+        namespace
+        {
+            // Budget for the drain wait: 1000 x 1 ms. The aborted completion
+            // is already queued once CancelIoEx returns, so the first or
+            // second call normally hits; only a pathological delay burns the
+            // full ~1 s budget.
+            constexpr auto kDrainWaitMs = 1;
+            constexpr auto kDrainAttempts = 1000;
+        }
+#endif
+
         auto unregister_watch([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> void
         {
 #if PJH_PLATFORM_WINDOWS
@@ -25,17 +37,32 @@ namespace pjh::platform
                     CancelIoEx(entry.handle, &entry.overlapped);
                     // The aborted completion is queued on the port; drain it so
                     // the entry can be destroyed without leaving a dangling
-                    // completion key behind.
-                    for (;;)
+                    // completion key behind. Completions of other watches may
+                    // sit ahead of ours in the queue: re-issue their reads so
+                    // they are not left deaf.
+                    const auto self = reinterpret_cast<ULONG_PTR>(&entry);
+                    for (int i = 0; i < kDrainAttempts; ++i)
                     {
                         DWORD bytes = 0;
                         ULONG_PTR key = 0;
                         OVERLAPPED *ov = nullptr;
-                        BOOL ok = GetQueuedCompletionStatus(impl.port, &bytes, &key, &ov, 0);
-                        if (!ok)
+                        if (!GetQueuedCompletionStatus(
+                                impl.port, &bytes, &key, &ov, static_cast<DWORD>(kDrainWaitMs)))
+                        {
+                            if (GetLastError() != WAIT_TIMEOUT)
+                                break;
+                            continue;
+                        }
+                        if (key == self)
                             break;
-                        if (key == reinterpret_cast<ULONG_PTR>(&entry))
-                            break;
+                        for (auto &e : impl.entries)
+                        {
+                            if (reinterpret_cast<ULONG_PTR>(e.get()) == key)
+                            {
+                                issue_read(impl, *e);
+                                break;
+                            }
+                        }
                     }
                 }
                 CloseHandle(entry.handle);

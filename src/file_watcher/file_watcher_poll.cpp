@@ -319,21 +319,14 @@ namespace pjh::platform
                 }
             }
 
-            auto issue_read([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> void
-            {
-                entry.overlapped = OVERLAPPED{};
-                entry.io_pending = false;
-                DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                               FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-                if (ReadDirectoryChangesW(
-                        entry.handle, entry.buffer.data(), static_cast<DWORD>(entry.buffer.size()),
-                        entry.recursive ? TRUE : FALSE, filter, nullptr, &entry.overlapped,
-                        nullptr))
-                    entry.io_pending = true;
-            }
-
             auto resync_windows(WatchEntry &entry, std::vector<FileEvent> &out) -> void
             {
+                // Baselines are taken at add() time and only refreshed by an
+                // earlier resync, so this diff runs against a possibly stale
+                // baseline and may re-report changes that were already
+                // delivered directly (bounded to the window since the last
+                // baseline). The net change is still reported; nothing is
+                // silently lost.
                 auto current_dirs = tree_dirs(entry);
                 for (const auto &dir : current_dirs) resync_directory(entry, dir, out);
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)

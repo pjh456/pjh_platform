@@ -10,6 +10,7 @@
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -380,6 +381,44 @@ TEST_CASE("FileWatcher move transfers the watch")
         moved, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
     CHECK(has_event(events, FileEventKind::Created, file));
 }
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE("FileWatcher remove of one watch leaves the other watch active")
+{
+    auto p = make_test_dir();
+    auto dir_a = p / "a";
+    auto dir_b = p / "b";
+    REQUIRE(std::filesystem::create_directories(dir_a));
+    REQUIRE(std::filesystem::create_directories(dir_b));
+
+    FileWatcher w;
+    REQUIRE(w.add(dir_a, false).is_ok());
+    REQUIRE(w.add(dir_b, false).is_ok());
+
+    // Change 1 on A: consumed by poll, so A's read is re-issued.
+    auto f1 = dir_a / "f1.txt";
+    REQUIRE(pjh::platform::Fs::write_file(f1, "one").is_ok());
+    collect_until(w, [&](const auto &all) { return has_event(all, FileEventKind::Created, f1); });
+
+    // Change 2 on A completes A's in-flight read; give the completion packet
+    // time to queue on the shared port before remove(dir_b) drains it.
+    auto f2 = dir_a / "f2.txt";
+    REQUIRE(pjh::platform::Fs::write_file(f2, "two").is_ok());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    REQUIRE(w.remove(dir_b).is_ok());
+
+    // A must still be listening: change 3 is reportable.
+    auto f3 = dir_a / "f3.txt";
+    REQUIRE(pjh::platform::Fs::write_file(f3, "three").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, f3); });
+    CHECK(has_event(events, FileEventKind::Created, f3));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
+#endif
 
 #if PJH_PLATFORM_LINUX
 TEST_CASE("FileWatcher recovers events lost to an inotify queue overflow")

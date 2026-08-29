@@ -91,7 +91,12 @@ namespace pjh::platform
                 entry.handle = INVALID_HANDLE_VALUE;
                 return pjh::result::Failure<ErrorCode>{map_windows_error(err)};
             }
-            if (!impl.port)
+            // The port was created by the constructor; this call only
+            // associates `entry.handle` with it and returns a duplicate port
+            // handle, which must be closed or every add() leaks one HANDLE.
+            if (impl.port)
+                CloseHandle(port);
+            else
                 impl.port = port;
 
             entry.buffer.resize(64 * 1024);

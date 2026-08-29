@@ -170,6 +170,12 @@ namespace pjh::platform
         [[nodiscard]] auto register_watch(FileWatcherImpl &impl, WatchEntry &entry)
             -> pjh::result::Result<void, ErrorCode>;
 
+#if PJH_PLATFORM_WINDOWS
+        /// @brief Re-issues the overlapped directory read after its completion
+        ///        was consumed (or after the watch was registered).
+        auto issue_read(FileWatcherImpl &impl, WatchEntry &entry) -> void;
+#endif
+
         /// @brief Platform-specific teardown of one watch.
         auto unregister_watch(FileWatcherImpl &impl, WatchEntry &entry) -> void;
 

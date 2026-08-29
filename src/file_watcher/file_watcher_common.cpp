@@ -67,6 +67,18 @@ namespace pjh::platform::detail
             return ErrorCode::Unknown;
         }
     }
+
+    auto issue_read([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> void
+    {
+        entry.overlapped = OVERLAPPED{};
+        entry.io_pending = false;
+        DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                       FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+        if (ReadDirectoryChangesW(
+                entry.handle, entry.buffer.data(), static_cast<DWORD>(entry.buffer.size()),
+                entry.recursive ? TRUE : FALSE, filter, nullptr, &entry.overlapped, nullptr))
+            entry.io_pending = true;
+    }
 #endif
 
     auto path_is_under(const std::filesystem::path &child, const std::filesystem::path &parent)
