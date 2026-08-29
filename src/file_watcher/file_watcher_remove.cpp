@@ -59,7 +59,14 @@ namespace pjh::platform
                         {
                             if (reinterpret_cast<ULONG_PTR>(e.get()) == key)
                             {
-                                issue_read(impl, *e);
+                                if (!issue_read(impl, *e))
+                                {
+                                    // The owner's handle is dead (e.g. its
+                                    // directory was removed): apply the same
+                                    // teardown as the poll path. remove() has
+                                    // no surface to report the failure.
+                                    static_cast<void>(on_read_failed(impl, *e, GetLastError()));
+                                }
                                 break;
                             }
                         }

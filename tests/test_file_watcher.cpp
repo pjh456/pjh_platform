@@ -418,6 +418,49 @@ TEST_CASE("FileWatcher remove of one watch leaves the other watch active")
     std::error_code ec;
     std::filesystem::remove_all(p, ec);
 }
+
+TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
+{
+    auto p = make_test_dir();
+    auto dir = p / "gone";
+    REQUIRE(std::filesystem::create_directories(dir));
+
+    FileWatcher w;
+    REQUIRE(w.add(dir, false).is_ok());
+
+    REQUIRE(std::filesystem::remove_all(dir));
+
+    // The in-flight read on the removed directory fails with a path-gone code
+    // (ERROR_BROKEN_PIPE on NTFS); the failure must map to NotFound, not
+    // Unknown, and the watch must then stay quietly dead instead of going
+    // deaf or re-failing on every poll.
+    ErrorCode err = ErrorCode::Success;
+    for (int i = 0; i < 200; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        if (r.is_err())
+        {
+            err = r.unwrap_err();
+            break;
+        }
+    }
+    CHECK(err != ErrorCode::Success);
+    CHECK_EQ(err, ErrorCode::NotFound);
+    CHECK(w.poll(std::chrono::milliseconds(10)).is_ok());
+
+    // The dead watch can be removed and the path re-registered.
+    CHECK(w.remove(dir).is_ok());
+    REQUIRE(std::filesystem::create_directories(dir));
+    REQUIRE(w.add(dir, false).is_ok());
+    auto f = dir / "after_readd.txt";
+    REQUIRE(pjh::platform::Fs::write_file(f, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, f); });
+    CHECK(has_event(events, FileEventKind::Created, f));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
 #endif
 
 #if PJH_PLATFORM_LINUX

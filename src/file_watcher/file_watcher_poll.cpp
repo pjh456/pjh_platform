@@ -584,7 +584,6 @@ namespace pjh::platform
             else
             {
                 DWORD oserr = GetLastError();
-                entry->io_pending = false;
                 if (oserr == ERROR_NOTIFY_ENUM_DIR)
                 {
                     // The change buffer overflowed and events were lost;
@@ -594,12 +593,20 @@ namespace pjh::platform
                 }
                 else
                 {
-                    return pjh::result::Failure<ErrorCode>{map_windows_error(oserr)};
+                    // Shared failure handling: a path-gone error marks the
+                    // watch dead, a transient error re-issues the read; both
+                    // report the batch as failed.
+                    return pjh::result::Failure<ErrorCode>{on_read_failed(impl, *entry, oserr)};
                 }
             }
 
-            entry->io_pending = false;
-            issue_read(impl, *entry);
+            if (!issue_read(impl, *entry))
+            {
+                // The batch decoded fine but the re-issue failed; route the
+                // error through the shared handler so a dead handle is torn
+                // down instead of leaving the watch silently deaf.
+                static_cast<void>(on_read_failed(impl, *entry, GetLastError()));
+            }
             return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
 #elif PJH_PLATFORM_MACOS

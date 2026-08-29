@@ -173,7 +173,16 @@ namespace pjh::platform
 #if PJH_PLATFORM_WINDOWS
         /// @brief Re-issues the overlapped directory read after its completion
         ///        was consumed (or after the watch was registered).
-        auto issue_read(FileWatcherImpl &impl, WatchEntry &entry) -> void;
+        /// @return Whether the re-issued read is now in flight.
+        [[nodiscard]] auto issue_read(FileWatcherImpl &impl, WatchEntry &entry) -> bool;
+
+        /// @brief Shared handling of a failed directory read: a path-gone error
+        ///        (stale handle, watched path removed) marks the watch dead and
+        ///        closes its handle; a transient error re-issues the read so
+        ///        the watch stays alive.
+        /// @return The `ErrorCode` to report for the failed batch.
+        [[nodiscard]] auto on_read_failed(FileWatcherImpl &impl, WatchEntry &entry, DWORD oserr)
+            -> ErrorCode;
 #endif
 
         /// @brief Platform-specific teardown of one watch.

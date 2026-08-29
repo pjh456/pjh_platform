@@ -47,12 +47,47 @@ namespace pjh::platform::detail
         }
     }
 #else
+    namespace
+    {
+        // A directory read completing with one of these codes means the
+        // watched path itself is gone: ERROR_BROKEN_PIPE is the stale-handle
+        // error the in-flight read reports when its directory is removed,
+        // the rest are the not-found family. The handle is dead and the
+        // watch can never recover.
+        auto is_path_gone(DWORD err) -> bool
+        {
+            switch (err)
+            {
+            case ERROR_FILE_NOT_FOUND:
+            case ERROR_PATH_NOT_FOUND:
+            case ERROR_DIR_NOT_FOUND:
+            case ERROR_BROKEN_PIPE:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        auto mark_watch_dead(WatchEntry &entry) -> void
+        {
+            entry.io_pending = false;
+            if (entry.handle != INVALID_HANDLE_VALUE)
+            {
+                CloseHandle(entry.handle);
+                entry.handle = INVALID_HANDLE_VALUE;
+            }
+        }
+    }
+
     auto map_windows_error(unsigned long err) -> ErrorCode
     {
         switch (err)
         {
         case ERROR_FILE_NOT_FOUND:
         case ERROR_PATH_NOT_FOUND:
+        case ERROR_DIR_NOT_FOUND:
+        // The watched directory was removed out from under the in-flight read.
+        case ERROR_BROKEN_PIPE:
             return ErrorCode::NotFound;
         case ERROR_ACCESS_DENIED:
             return ErrorCode::PermissionDenied;
@@ -68,7 +103,7 @@ namespace pjh::platform::detail
         }
     }
 
-    auto issue_read([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> void
+    auto issue_read([[maybe_unused]] FileWatcherImpl &impl, WatchEntry &entry) -> bool
     {
         entry.overlapped = OVERLAPPED{};
         entry.io_pending = false;
@@ -78,6 +113,30 @@ namespace pjh::platform::detail
                 entry.handle, entry.buffer.data(), static_cast<DWORD>(entry.buffer.size()),
                 entry.recursive ? TRUE : FALSE, filter, nullptr, &entry.overlapped, nullptr))
             entry.io_pending = true;
+        return entry.io_pending;
+    }
+
+    auto on_read_failed(FileWatcherImpl &impl, WatchEntry &entry, DWORD oserr) -> ErrorCode
+    {
+        if (is_path_gone(oserr))
+        {
+            // The watched path is gone; the watch is dead and must not be
+            // re-issued on the stale handle.
+            mark_watch_dead(entry);
+            return map_windows_error(oserr);
+        }
+        // Transient failure: re-issue the read so the watch stays alive.
+        if (issue_read(impl, entry))
+            return map_windows_error(oserr);
+        // The re-issue itself failed: classify that error too so a dead
+        // handle is torn down instead of leaving the watch silently deaf.
+        DWORD reissue_err = GetLastError();
+        if (is_path_gone(reissue_err))
+        {
+            mark_watch_dead(entry);
+            return map_windows_error(reissue_err);
+        }
+        return map_windows_error(oserr);
     }
 #endif
 
