@@ -128,6 +128,8 @@ namespace pjh::platform
          *          Directories are watched directly. For directories,
          *          @p recursive controls whether subdirectories are watched
          *          too; the flag is ignored when @p path is a file.
+         *          Subdirectories that cannot be opened (permission denied)
+         *          are skipped: not watched, no events from inside them.
          *
          * @param path Path to watch.
          * @param recursive Watch subdirectories recursively (directories only).

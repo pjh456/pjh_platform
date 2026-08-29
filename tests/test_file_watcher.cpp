@@ -1051,6 +1051,129 @@ TEST_CASE("FileWatcher move-assignment does not leak the previous inotify instan
 }
 #endif
 
+#if PJH_PLATFORM_UNIX
+TEST_CASE("FileWatcher add skips unreadable subdirectories")
+{
+    // A subdirectory that cannot be opened (mode 000) must be skipped by the
+    // recursive walks instead of making add()/poll() throw: no watch, no
+    // baseline, no events from inside it, the readable parts watch normally.
+    // CI runners run unprivileged; when the mode 000 is not enforced for the
+    // current process (e.g. root) the case self-skips with a note.
+    auto p = make_test_dir();
+    auto secret = p / "secret";
+    auto open_dir = p / "open";
+    REQUIRE(std::filesystem::create_directories(secret));
+    REQUIRE(std::filesystem::create_directories(open_dir));
+
+    std::error_code sec;
+    auto original = std::filesystem::status(secret, sec).permissions();
+    REQUIRE_FALSE(sec);
+    std::filesystem::permissions(secret, std::filesystem::perms::none, sec);
+    REQUIRE_FALSE(sec);
+
+    // Self-skip probe: if the 000 directory is still openable, EACCES cannot
+    // be manufactured here (privileged process); restore and skip.
+    {
+        std::error_code pec;
+        auto probe = std::filesystem::directory_iterator(secret, pec);
+        if (!pec)
+        {
+            std::error_code rec;
+            std::filesystem::permissions(secret, original, rec);
+            std::filesystem::remove_all(p, rec);
+            return;
+        }
+    }
+
+    {
+        // Restores the mode on every exit path (including a REQUIRE
+        // failure's unwind); a leaked 000 directory would break the next
+        // case's remove_all on the shared sandbox path.
+        struct RestorePermissions
+        {
+            std::filesystem::path dir;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(dir, perms, ec);
+            }
+        } guard{secret, original};
+
+        FileWatcher w;
+        // P1 (main pin): pre-fix the recursive walk in add() threw a
+        // filesystem_error (EACCES) from operator++; the case passing is the
+        // Never-throws pin.
+        REQUIRE(w.add(p, true).is_ok());
+
+        // P2: the readable part is alive — skipping is not deafness.
+        auto inside = open_dir / "inside.txt";
+        REQUIRE(pjh::platform::Fs::write_file(inside, "inside").is_ok());
+        auto events = collect_until(
+            w, [&](const auto &all) { return has_event(all, FileEventKind::Created, inside); });
+        CHECK(has_event(events, FileEventKind::Created, inside));
+
+#if PJH_PLATFORM_LINUX
+        // P3/P4 pin the overflow-resync walk, reachable only through a real
+        // IN_Q_OVERFLOW (the same mechanism as the overflow cases above):
+        // a seed, a drained queue, then N = limit + 200 distinct-named
+        // creates with no poll, then a drain in which every poll must
+        // succeed and in which at least 200 flood names can only be
+        // reported through the resync diff.
+        auto burst = open_dir / "burst.txt";
+        REQUIRE(pjh::platform::Fs::write_file(burst, "burst").is_ok());
+        std::vector<FileEvent> all;
+        {
+            auto pre = collect_until(
+                w, [&](const auto &a) { return has_event(a, FileEventKind::Created, burst); });
+            for (auto &e : pre) all.push_back(std::move(e));
+        }
+        REQUIRE(drain_until_empty(w, all));
+
+        int limit = read_inotify_limit();
+        if (limit == 0 || limit > 131072)
+            return;  // limit unreadable, or far above the default 16384:
+                     // documented silent skip that bounds the worst-case wall
+                     // clock; the guard above restores the permissions
+
+        const int n = limit + 200;
+        for (int i = 0; i < n; ++i)
+        {
+            char name[16] = {};
+            std::snprintf(name, sizeof(name), "f_%06d", i);
+            int fd = ::open((p / name).c_str(), O_CREAT | O_WRONLY, 0644);
+            REQUIRE(fd >= 0);
+            ::close(fd);
+        }
+
+        // P3: every poll during the drain succeeds — pre-fix the resync
+        // walk threw from inside poll().
+        REQUIRE(drain_until_empty(w, all));
+
+        // P4: index the Created flood names by path (a linear has_event per
+        // name over ~limit records would be quadratic). The queue holds at
+        // most `limit` records, so with N = limit + 200 distinct names the
+        // excess can only have been reported by the resync diff: the walk
+        // ran over the tree containing the unreadable subdirectory.
+        std::set<std::filesystem::path> flood_created;
+        for (const auto &e : all)
+        {
+            if (e.kind != FileEventKind::Created || e.path.parent_path() != p)
+                continue;
+            auto name = e.path.filename().string();
+            if (name.size() == 8 && name.compare(0, 2, "f_") == 0)
+                flood_created.insert(e.path);
+        }
+        CHECK(flood_created.size() >= static_cast<std::size_t>(n));
+#endif
+    }
+
+    std::error_code rec;
+    std::filesystem::remove_all(p, rec);
+}
+#endif
+
 TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
 {
     // Baseline / regression benchmark for the FileWatcher poll drain path.

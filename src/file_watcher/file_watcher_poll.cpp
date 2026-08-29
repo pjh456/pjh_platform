@@ -142,7 +142,9 @@ namespace pjh::platform
                 if (!entry.recursive)
                     return dirs;
                 std::error_code ec;
-                for (auto it = std::filesystem::recursive_directory_iterator(entry.watch_root, ec);
+                for (auto it = std::filesystem::recursive_directory_iterator(
+                         entry.watch_root,
+                         std::filesystem::directory_options::skip_permission_denied, ec);
                      it != std::filesystem::recursive_directory_iterator(); ++it)
                 {
                     if (ec)
