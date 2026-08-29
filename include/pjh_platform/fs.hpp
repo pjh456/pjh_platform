@@ -61,7 +61,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto create_directories(const std::filesystem::path &p)
+        [[nodiscard]] static auto create_directories(const std::filesystem::path &p)
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
@@ -85,7 +85,7 @@ namespace pjh::platform
          * @platform All supported platforms; Windows additionally handles
          *           read-only attributes.
          */
-        static auto remove_all(const std::filesystem::path &p)
+        [[nodiscard]] static auto remove_all(const std::filesystem::path &p)
             -> pjh::result::Result<std::uintmax_t, ErrorCode>;
 
         /**
@@ -212,7 +212,8 @@ namespace pjh::platform
          * @platform All supported platforms, with native
          *           `WriteFile`/`write` implementations.
          */
-        static auto write_file(const std::filesystem::path &p, std::string_view content)
+        [[nodiscard]] static auto write_file(
+            const std::filesystem::path &p, std::string_view content)
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
@@ -240,7 +241,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto copy_file(
+        [[nodiscard]] static auto copy_file(
             const std::filesystem::path &from,
             const std::filesystem::path &to,
             bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
@@ -273,7 +274,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto copy_directory(
+        [[nodiscard]] static auto copy_directory(
             const std::filesystem::path &from,
             const std::filesystem::path &to,
             bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;
@@ -311,7 +312,7 @@ namespace pjh::platform
          * @platform All supported platforms; cross-device fallback copies the
          *           tree and removes the source.
          */
-        static auto rename(
+        [[nodiscard]] static auto rename(
             const std::filesystem::path &from,
             const std::filesystem::path &to,
             bool overwrite = false) -> pjh::result::Result<void, ErrorCode>;

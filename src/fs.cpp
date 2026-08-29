@@ -413,22 +413,28 @@ namespace pjh::platform
                 return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
             }
         }
-        else if (std::filesystem::is_directory(to, ec))
+        else
         {
-            // A directory target can only be replaced when it is empty.
-            std::error_code iter_ec;
-            bool empty = std::filesystem::directory_iterator(to, iter_ec) ==
-                         std::filesystem::directory_iterator();
-            if (iter_ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
-            if (!empty)
-                return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
-            std::filesystem::remove(to, iter_ec);
-            if (iter_ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+            std::error_code dir_ec;
+            if (std::filesystem::is_directory(to, dir_ec))
+            {
+                // A directory target can only be replaced when it is empty.
+                std::error_code iter_ec;
+                bool empty = std::filesystem::directory_iterator(to, iter_ec) ==
+                             std::filesystem::directory_iterator();
+                if (iter_ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+                if (!empty)
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
+                std::filesystem::remove(to, iter_ec);
+                if (iter_ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+            }
+            else if (dir_ec)
+            {
+                return pjh::result::Failure<ErrorCode>{map_error_code(dir_ec)};
+            }
         }
-        if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
 
 #if PJH_PLATFORM_WINDOWS
         DWORD flags = MOVEFILE_COPY_ALLOWED;

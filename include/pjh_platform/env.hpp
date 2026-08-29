@@ -68,7 +68,7 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto set(std::string_view name, std::string_view value)
+        [[nodiscard]] static auto set(std::string_view name, std::string_view value)
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
@@ -90,7 +90,8 @@ namespace pjh::platform
          *
          * @platform All supported platforms.
          */
-        static auto unset(std::string_view name) -> pjh::result::Result<void, ErrorCode>;
+        [[nodiscard]] static auto unset(std::string_view name)
+            -> pjh::result::Result<void, ErrorCode>;
 
         /**
          * @brief Returns a copy of the entire environment as a name-to-value
