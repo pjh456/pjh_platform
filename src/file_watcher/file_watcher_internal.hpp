@@ -121,12 +121,6 @@ namespace pjh::platform
         [[nodiscard]] auto make_absolute(const std::filesystem::path &p)
             -> pjh::result::Result<std::filesystem::path, ErrorCode>;
 
-#if !PJH_PLATFORM_WINDOWS
-        [[nodiscard]] auto map_errno_to_error(int err) -> ErrorCode;
-#else
-        [[nodiscard]] auto map_windows_error(unsigned long err) -> ErrorCode;
-#endif
-
         /// @brief Whether @p child is @p parent or lies below it (lexical).
         [[nodiscard]] auto path_is_under(
             const std::filesystem::path &child, const std::filesystem::path &parent) -> bool;

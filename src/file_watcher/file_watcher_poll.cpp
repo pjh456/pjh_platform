@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "../error_mapping.hpp"
 #include "file_watcher_internal.hpp"
 
 #if PJH_PLATFORM_WINDOWS
@@ -636,11 +637,7 @@ namespace pjh::platform
             struct pollfd pfd{impl.fd, POLLIN, 0};
             int rc = ::poll(&pfd, 1, static_cast<int>(ms));
             if (rc == -1)
-            {
-                if (errno == EINTR)
-                    return pjh::result::Failure<ErrorCode>{ErrorCode::Interrupted};
                 return pjh::result::Failure<ErrorCode>{map_errno_to_error(errno)};
-            }
             if (rc == 0)
                 return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 

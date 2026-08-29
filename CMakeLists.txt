@@ -13,6 +13,7 @@ target_sources(pjh_platform
     src/directory_snapshot.cpp
     src/directory_diff.cpp
     src/directory_status.cpp
+    src/error_mapping.cpp
     src/file_watcher/file_watcher.cpp
     src/file_watcher/file_watcher_add.cpp
     src/file_watcher/file_watcher_remove.cpp

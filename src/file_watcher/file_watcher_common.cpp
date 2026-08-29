@@ -1,8 +1,8 @@
-#include <cerrno>
 #include <filesystem>
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
 
+#include "../error_mapping.hpp"
 #include "file_watcher_internal.hpp"
 
 #if PJH_PLATFORM_LINUX
@@ -24,29 +24,7 @@ namespace pjh::platform::detail
         return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(abs.lexically_normal());
     }
 
-#if !PJH_PLATFORM_WINDOWS
-    auto map_errno_to_error(int err) -> ErrorCode
-    {
-        switch (err)
-        {
-        case ENOENT:
-            return ErrorCode::NotFound;
-        case EACCES:
-        case EPERM:
-            return ErrorCode::PermissionDenied;
-        case EEXIST:
-            return ErrorCode::AlreadyExists;
-        case EINVAL:
-            return ErrorCode::InvalidArgument;
-        case ENOSPC:
-            return ErrorCode::LimitReached;
-        case EINTR:
-            return ErrorCode::Interrupted;
-        default:
-            return ErrorCode::Unknown;
-        }
-    }
-#else
+#if PJH_PLATFORM_WINDOWS
     namespace
     {
         // A directory read completing with one of these codes means the
@@ -76,30 +54,6 @@ namespace pjh::platform::detail
                 CloseHandle(entry.handle);
                 entry.handle = INVALID_HANDLE_VALUE;
             }
-        }
-    }
-
-    auto map_windows_error(unsigned long err) -> ErrorCode
-    {
-        switch (err)
-        {
-        case ERROR_FILE_NOT_FOUND:
-        case ERROR_PATH_NOT_FOUND:
-        case ERROR_DIR_NOT_FOUND:
-        // The watched directory was removed out from under the in-flight read.
-        case ERROR_BROKEN_PIPE:
-            return ErrorCode::NotFound;
-        case ERROR_ACCESS_DENIED:
-            return ErrorCode::PermissionDenied;
-        case ERROR_ALREADY_EXISTS:
-            return ErrorCode::AlreadyExists;
-        case ERROR_INVALID_PARAMETER:
-        case ERROR_INVALID_HANDLE:
-            return ErrorCode::InvalidArgument;
-        case ERROR_NOT_SUPPORTED:
-            return ErrorCode::NotSupported;
-        default:
-            return ErrorCode::Unknown;
         }
     }
 

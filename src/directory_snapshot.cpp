@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <iterator>
@@ -8,70 +7,13 @@
 #include <unordered_set>
 #include <utility>
 
-#if PJH_PLATFORM_WINDOWS
-#include <windows.h>
-#endif
+#include "error_mapping.hpp"
 
 namespace pjh::platform
 {
 
     namespace
     {
-        auto map_error_code(const std::error_code &ec) -> ErrorCode
-        {
-            if (!ec)
-                return ErrorCode::Success;
-
-            if (ec.category() == std::generic_category())
-            {
-                switch (ec.value())
-                {
-                case ENOENT:
-                    return ErrorCode::NotFound;
-                case EACCES:
-                case EPERM:
-                    return ErrorCode::PermissionDenied;
-                case EEXIST:
-                    return ErrorCode::AlreadyExists;
-                case EINVAL:
-                    return ErrorCode::InvalidArgument;
-#ifdef ENOTSUP
-                case ENOTSUP:
-                    return ErrorCode::NotSupported;
-#endif
-                case EIO:
-                    return ErrorCode::IoError;
-                default:
-                    return ErrorCode::Unknown;
-                }
-            }
-
-#if PJH_PLATFORM_WINDOWS
-            if (ec.category() == std::system_category())
-            {
-                switch (static_cast<unsigned long>(ec.value()))
-                {
-                case ERROR_FILE_NOT_FOUND:
-                case ERROR_PATH_NOT_FOUND:
-                    return ErrorCode::NotFound;
-                case ERROR_ACCESS_DENIED:
-                    return ErrorCode::PermissionDenied;
-                case ERROR_ALREADY_EXISTS:
-                case ERROR_FILE_EXISTS:
-                    return ErrorCode::AlreadyExists;
-                case ERROR_INVALID_PARAMETER:
-                    return ErrorCode::InvalidArgument;
-                case ERROR_NOT_SUPPORTED:
-                    return ErrorCode::NotSupported;
-                default:
-                    return ErrorCode::Unknown;
-                }
-            }
-#endif
-
-            return ErrorCode::Unknown;
-        }
-
         // FNV-1a 64-bit: offset basis and prime (FNV spec).
         constexpr std::uint64_t kFnv1a64OffsetBasis = 0xcbf29ce484222325ULL;
         constexpr std::uint64_t kFnv1a64Prime = 0x00000100000001b3ULL;
@@ -172,18 +114,18 @@ namespace pjh::platform
         std::error_code ec;
         auto abs = std::filesystem::absolute(dir, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         abs = abs.lexically_normal();
 
         auto is_dir = std::filesystem::is_directory(abs, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         if (!is_dir)
         {
             if (std::filesystem::exists(abs, ec))
             {
                 if (ec)
-                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
                 return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
             }
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
@@ -204,7 +146,7 @@ namespace pjh::platform
 
         std::filesystem::directory_iterator it(snap.m_dir_path, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         std::filesystem::directory_iterator end;
 
         for (; it != end; it.increment(ec))

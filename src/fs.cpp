@@ -4,6 +4,8 @@
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
 
+#include "error_mapping.hpp"
+
 #if PJH_PLATFORM_WINDOWS
 #include <windows.h>
 #else
@@ -18,62 +20,6 @@ namespace pjh::platform
 
     namespace
     {
-
-        auto map_error_code(const std::error_code &ec) -> ErrorCode
-        {
-            if (!ec)
-                return ErrorCode::Success;
-
-            if (ec.category() == std::generic_category())
-            {
-                switch (ec.value())
-                {
-                case ENOENT:
-                    return ErrorCode::NotFound;
-                case EACCES:
-                case EPERM:
-                    return ErrorCode::PermissionDenied;
-                case EEXIST:
-                    return ErrorCode::AlreadyExists;
-                case EINVAL:
-                    return ErrorCode::InvalidArgument;
-#ifdef ENOTSUP
-                case ENOTSUP:
-                    return ErrorCode::NotSupported;
-#endif
-                case EIO:
-                    return ErrorCode::IoError;
-                default:
-                    return ErrorCode::Unknown;
-                }
-            }
-
-#if defined(_WIN32)
-            if (ec.category() == std::system_category())
-            {
-                switch (static_cast<unsigned long>(ec.value()))
-                {
-                case ERROR_FILE_NOT_FOUND:
-                case ERROR_PATH_NOT_FOUND:
-                    return ErrorCode::NotFound;
-                case ERROR_ACCESS_DENIED:
-                    return ErrorCode::PermissionDenied;
-                case ERROR_ALREADY_EXISTS:
-                case ERROR_FILE_EXISTS:
-                    return ErrorCode::AlreadyExists;
-                case ERROR_INVALID_PARAMETER:
-                    return ErrorCode::InvalidArgument;
-                case ERROR_NOT_SUPPORTED:
-                    return ErrorCode::NotSupported;
-                default:
-                    return ErrorCode::Unknown;
-                }
-            }
-#endif
-
-            return ErrorCode::Unknown;
-        }
-
         auto is_cross_device(const std::error_code &ec) -> bool
         {
 #if PJH_PLATFORM_WINDOWS
@@ -94,7 +40,7 @@ namespace pjh::platform
             if (std::filesystem::is_directory(from, ec))
             {
                 if (ec)
-                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
                 auto copied = Fs::copy_directory(from, to, overwrite);
                 if (copied.is_err())
                     return copied;
@@ -104,7 +50,7 @@ namespace pjh::platform
                 return pjh::result::Result<void, ErrorCode>::Ok();
             }
             if (ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
 
             auto copied = Fs::copy_file(from, to, overwrite);
             if (copied.is_err())
@@ -112,7 +58,7 @@ namespace pjh::platform
             std::error_code rem_ec;
             std::filesystem::remove(from, rem_ec);
             if (rem_ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(rem_ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(rem_ec)};
             return pjh::result::Result<void, ErrorCode>::Ok();
         }
 
@@ -126,7 +72,7 @@ namespace pjh::platform
         std::error_code ec;
         std::filesystem::create_directories(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
@@ -160,7 +106,7 @@ namespace pjh::platform
         auto count = std::filesystem::remove_all(p, ec);
         if (ec)
         {
-            auto mapped = map_error_code(ec);
+            auto mapped = detail::map_error_code(ec);
             if (mapped == ErrorCode::NotFound)
                 return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(0);
             return pjh::result::Failure<ErrorCode>{mapped};
@@ -186,7 +132,7 @@ namespace pjh::platform
         std::error_code ec;
         auto sz = std::filesystem::file_size(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<std::uintmax_t, ErrorCode>::Ok(sz);
     }
 
@@ -346,7 +292,7 @@ namespace pjh::platform
                       : std::filesystem::copy_options::none,
             ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
@@ -358,13 +304,13 @@ namespace pjh::platform
         if (!std::filesystem::is_directory(from, ec))
         {
             if (ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
             return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
         }
 
         std::filesystem::create_directories(to, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
 
         auto options = overwrite ? std::filesystem::copy_options::overwrite_existing
                                  : std::filesystem::copy_options::none;
@@ -381,10 +327,10 @@ namespace pjh::platform
             else
                 std::filesystem::copy_file(entry.path(), dest, options, entry_ec);
             if (entry_ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(entry_ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(entry_ec)};
         }
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
@@ -399,7 +345,7 @@ namespace pjh::platform
         if (!std::filesystem::exists(from, ec))
         {
             if (ec)
-                return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         }
 
@@ -409,7 +355,7 @@ namespace pjh::platform
             if (std::filesystem::exists(to, to_ec))
             {
                 if (to_ec)
-                    return pjh::result::Failure<ErrorCode>{map_error_code(to_ec)};
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(to_ec)};
                 return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
             }
         }
@@ -423,16 +369,16 @@ namespace pjh::platform
                 bool empty = std::filesystem::directory_iterator(to, iter_ec) ==
                              std::filesystem::directory_iterator();
                 if (iter_ec)
-                    return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(iter_ec)};
                 if (!empty)
                     return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
                 std::filesystem::remove(to, iter_ec);
                 if (iter_ec)
-                    return pjh::result::Failure<ErrorCode>{map_error_code(iter_ec)};
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(iter_ec)};
             }
             else if (dir_ec)
             {
-                return pjh::result::Failure<ErrorCode>{map_error_code(dir_ec)};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(dir_ec)};
             }
         }
 
@@ -447,7 +393,7 @@ namespace pjh::platform
         if (is_cross_device(std::error_code(static_cast<int>(err), std::system_category())))
             return rename_via_copy(from, to, overwrite);
         return pjh::result::Failure<ErrorCode>{
-            map_error_code(std::error_code(static_cast<int>(err), std::system_category()))};
+            detail::map_error_code(std::error_code(static_cast<int>(err), std::system_category()))};
 #else
         if (::rename(from.c_str(), to.c_str()) == 0)
             return pjh::result::Result<void, ErrorCode>::Ok();
@@ -455,7 +401,7 @@ namespace pjh::platform
         std::error_code err_ec(errno, std::generic_category());
         if (is_cross_device(err_ec))
             return rename_via_copy(from, to, overwrite);
-        return pjh::result::Failure<ErrorCode>{map_error_code(err_ec)};
+        return pjh::result::Failure<ErrorCode>{detail::map_error_code(err_ec)};
 #endif
     }
 
@@ -467,7 +413,7 @@ namespace pjh::platform
         for (const auto &entry : std::filesystem::directory_iterator(p, ec))
             entries.push_back(entry.path());
         if (ec)
-            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(
             std::move(entries));
     }

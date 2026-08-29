@@ -1,6 +1,7 @@
 #include <pjh_platform/file_watcher.hpp>
 #include <pjh_platform/platform.hpp>
 
+#include "../error_mapping.hpp"
 #include "file_watcher_internal.hpp"
 
 #if PJH_PLATFORM_WINDOWS
