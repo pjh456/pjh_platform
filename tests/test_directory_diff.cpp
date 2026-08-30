@@ -164,9 +164,14 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
 
     // Not every platform bumps a directory's mtime when a child is added
     // (Windows keeps directory last-write-time lazily), so touch it explicitly
-    // to guarantee the setup below exercises a changed directory mtime.
+    // to guarantee the setup below exercises a changed directory mtime. The
+    // target sits 2 s in the future: at least one timestamp quantum past the
+    // creation-time value on every supported filesystem (worst quantum is
+    // FAT's 2 s), so the REQUIRE_NE below is deterministic rather than
+    // bucket-dependent.
     std::error_code ec;
-    std::filesystem::last_write_time(p / "sub", std::filesystem::file_time_type::clock::now(), ec);
+    std::filesystem::last_write_time(
+        p / "sub", std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), ec);
     REQUIRE_FALSE(ec);
 
     auto after = DirectorySnapshot::capture(p);
@@ -383,6 +388,57 @@ TEST_CASE("DirectoryDiff rename pairing is greedy first-match in created-name or
     CHECK_EQ(renames[0].m_new_filename, std::filesystem::path("new_a.bin"));
     CHECK_EQ(renames[1].m_old_filename, std::filesystem::path("old_b.bin"));
     CHECK_EQ(renames[1].m_new_filename, std::filesystem::path("new_b.bin"));
+}
+
+TEST_CASE("DirectoryDiff pairs a one-sided hashed rename via the size and mtime fallback")
+{
+    auto p = make_test_dir();
+    auto old_a = p / "old_a.txt";
+    auto old_b = p / "old_b.txt";
+    REQUIRE(pjh::platform::Fs::write_file(old_a, "alpha").is_ok());   // 5 B
+    REQUIRE(pjh::platform::Fs::write_file(old_b, "bravo2").is_ok());  // 6 B
+
+    // Asymmetric per-capture hash lists: old_a is hashed only in `before`,
+    // new_b only in `after`, so each renamed file carries a hash on exactly
+    // one side of the pair and the predicate must take its size+mtime
+    // fallback branch. Distinct sizes keep the (size, mtime) keys apart even
+    // when coarse-quantum filesystems collapse the two write mtimes.
+    std::vector<std::filesystem::path> before_list{std::filesystem::path("old_a.txt")};
+    auto before = DirectorySnapshot::capture(p, &before_list);
+    REQUIRE(before.is_ok());
+    auto before_snap = before.unwrap();
+    REQUIRE(before_snap.get("old_a.txt")->m_hash.has_value());
+    REQUIRE_FALSE(before_snap.get("old_b.txt")->m_hash.has_value());
+
+    std::error_code rn_ec;
+    std::filesystem::rename(old_a, p / "new_a.txt", rn_ec);
+    REQUIRE_FALSE(rn_ec);
+    std::filesystem::rename(old_b, p / "new_b.txt", rn_ec);
+    REQUIRE_FALSE(rn_ec);
+
+    std::vector<std::filesystem::path> after_list{std::filesystem::path("new_b.txt")};
+    auto after = DirectorySnapshot::capture(p, &after_list);
+    REQUIRE(after.is_ok());
+    auto after_snap = after.unwrap();
+    REQUIRE_FALSE(after_snap.get("new_a.txt")->m_hash.has_value());
+    REQUIRE(after_snap.get("new_b.txt")->m_hash.has_value());
+
+    auto diff = DirectoryDiff::compare(before_snap, after_snap);
+    REQUIRE(diff.is_ok());
+    auto diff_snap = diff.unwrap();
+    auto &changes = diff_snap.changes();
+    REQUIRE_EQ(changes.size(), 4u);
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Deleted, old_a));
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Deleted, old_b));
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Created, p / "new_a.txt"));
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Created, p / "new_b.txt"));
+
+    auto renames = diff_snap.detect_renames(before_snap, after_snap);
+    REQUIRE_EQ(renames.size(), 2u);
+    CHECK_EQ(renames[0].m_old_filename, std::filesystem::path("old_a.txt"));
+    CHECK_EQ(renames[0].m_new_filename, std::filesystem::path("new_a.txt"));
+    CHECK_EQ(renames[1].m_old_filename, std::filesystem::path("old_b.txt"));
+    CHECK_EQ(renames[1].m_new_filename, std::filesystem::path("new_b.txt"));
 }
 
 TEST_CASE("DirectoryDiff detect_renames benchmark gated by PJH_RENAME_STORM_BENCH_FILES")
