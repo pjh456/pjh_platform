@@ -271,6 +271,22 @@ namespace pjh::platform
                     return;
                 }
 
+                // The stored root path may no longer be a directory: if it was
+                // renamed away during the overflow window the kernel watch
+                // still follows the inode (so do the child watches), but
+                // tree_dirs would walk the stale path and yield just the root,
+                // so the reconcile below would release every live child watch
+                // and the refresh would emit a spurious Deleted(root) and wipe
+                // the baselines. inotify offers no wd-to-path resolution, so
+                // the new path cannot be re-anchored; keep the watch set and
+                // baselines intact and let the consumer re-add. The watch keeps
+                // covering the inode under its stale path (bounded re-report,
+                // same class as the file-watch inode-follow contract in
+                // file_watcher.hpp @details).
+                std::error_code rec;
+                if (!std::filesystem::is_directory(entry.watch_root, rec) || rec)
+                    return;
+
                 // Baselines are taken at add() time and only refreshed by an
                 // earlier resync, so this diff runs against a possibly stale
                 // baseline and may re-report changes that were already

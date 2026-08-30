@@ -1534,6 +1534,124 @@ TEST_CASE("FileWatcher add skips unreadable subdirectories")
 }
 #endif
 
+#if PJH_PLATFORM_LINUX
+TEST_CASE("FileWatcher keeps recursive coverage after the root is renamed away in an overflow")
+{
+    // Absent-root resync pin: the watched root is renamed away (the
+    // directory mask carries no SELF bits and the parent is not watched,
+    // so the rename produces no inotify record for this fd) and the queue
+    // overflows before the first poll, so the resync runs against a root
+    // path that no longer exists. Pre-fix the reconcile released every
+    // live child watch (recursive coverage silently lost) and the refresh
+    // emitted a spurious Deleted(root) and wiped the baselines; post-fix
+    // the resync early-returns and keeps the watch set and baselines
+    // intact: the kernel watches still follow the renamed inode, events
+    // keep arriving under the stale path (bounded re-report), and the
+    // consumer revives the watch with remove() + add(). A1 below is the
+    // discriminator: red pre-fix, green post-fix.
+    auto p = make_test_dir();
+    auto p2 = p.parent_path() / (p.filename().string() + "_moved");
+    std::error_code ec;
+    std::filesystem::remove_all(p2, ec);  // defensive: the rename needs p2
+                                          // absent
+    REQUIRE(std::filesystem::create_directories(p / "sub1"));
+    REQUIRE(pjh::platform::Fs::write_file(p / "top.txt", "top").is_ok());
+    REQUIRE(pjh::platform::Fs::write_file(p / "sub1" / "child.txt", "child").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, true).is_ok());  // root watch W + child watch C1, baselines
+
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+    {
+        // limit unreadable, or far above the default 16384: documented
+        // silent skip that bounds the worst-case wall clock; the default
+        // CI lane never hits this branch
+        std::filesystem::remove_all(p, ec);
+        return;
+    }
+
+    // Drain the add-time queue so the overflow can only come from the
+    // flood below.
+    std::vector<FileEvent> rest;
+    REQUIRE(drain_until_empty(w, rest));
+
+    // Rename the root away: the subtree moves atomically, so W and C1 keep
+    // following the inode at p2 while p no longer exists. No inotify
+    // record is produced for this fd, so no poll is needed for the rename
+    // to take effect.
+    std::filesystem::rename(p, p2, ec);
+    REQUIRE_FALSE(ec);
+
+    // Flood with zero polls: N = limit + 200 distinct-named creates, each
+    // exactly one IN_CREATE record (distinct names are never coalesced,
+    // man7 NOTES); the queue overflows and an IN_Q_OVERFLOW record is
+    // always generated (man7).
+    const int n = limit + 200;
+    for (int i = 0; i < n; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "f_%06d", i);
+        int fd = ::open((p2 / name).c_str(), O_CREAT | O_WRONLY, 0644);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+    }
+
+    std::vector<FileEvent> all;
+    REQUIRE(drain_until_empty(w, all));
+
+    // A0: self-check (green in both worlds): direct delivery alone can
+    // carry at most limit < N records, so 0 < count < N proves the queue
+    // overflowed and the resync ran. Index the flood's Created events by
+    // path (a linear has_event per name over ~limit records would be
+    // quadratic); the names are delivered under the stale root p.
+    std::set<std::filesystem::path> flood_created;
+    for (const auto &e : all)
+    {
+        if (e.kind != FileEventKind::Created || e.path.parent_path() != p)
+            continue;
+        auto name = e.path.filename().string();
+        if (name.size() == 8 && name.compare(0, 2, "f_") == 0)
+            flood_created.insert(e.path);
+    }
+    CHECK(!flood_created.empty());
+    CHECK(flood_created.size() < static_cast<std::size_t>(n));
+
+    // A2: spurious-Deleted pin: pre-fix the refresh's failed capture of
+    // the absent root emitted Deleted(p) — a rename, not a deletion, and
+    // the normal non-overflow path never emits Deleted for a directory
+    // root; post-fix the early return emits nothing. A red A2 also
+    // independently proves the resync ran.
+    CHECK_FALSE(has_event(all, FileEventKind::Deleted, p));
+
+    // A3: liveness pin (non-discriminator, green in both worlds): the
+    // root watch W survives the resync (the reconcile skips root_wd), so
+    // a change in a direct file of the moved root is still delivered,
+    // under the stale path.
+    REQUIRE(pjh::platform::Fs::write_file(p2 / "top.txt", "top again").is_ok());
+    auto alive = collect_until(
+        w, [&](const auto &a) { return has_event(a, FileEventKind::Modified, p / "top.txt"); });
+    CHECK(has_event(alive, FileEventKind::Modified, p / "top.txt"));
+
+    // A1: discriminator pin (the deafness body): the child watch C1 must
+    // have survived the resync. Pre-fix the reconcile released it (its
+    // path is gone from the stale-root walk), so a change in p2/sub1
+    // produces no inotify record at all — the write below times out
+    // (red); post-fix C1 follows the inode and the change is delivered
+    // under the stale path p/sub1/child.txt. CHECK level so A3 above
+    // still evaluates on a red run.
+    REQUIRE(pjh::platform::Fs::write_file(p2 / "sub1" / "child.txt", "child again").is_ok());
+    auto covered = collect_until(
+        w, [&](const auto &a)
+        { return has_event(a, FileEventKind::Modified, p / "sub1" / "child.txt"); });
+    CHECK(has_event(covered, FileEventKind::Modified, p / "sub1" / "child.txt"));
+
+    // p is gone (renamed): remove_all(p) is a no-op; p2 carries the tree.
+    std::filesystem::remove_all(p2, ec);
+    std::filesystem::remove_all(p, ec);
+}
+#endif
+
 TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
 {
     // Baseline / regression benchmark for the FileWatcher poll drain path.
