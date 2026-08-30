@@ -1409,6 +1409,240 @@ TEST_CASE("FileWatcher move-assignment does not leak the previous inotify instan
     REQUIRE(r.is_ok());
     CHECK(r.unwrap().empty());
 }
+
+TEST_CASE("FileWatcher overlapping directory and file watch report a modification once")
+{
+    // Twin pin: post-03.4 an overlapping directory + file pair holds two
+    // distinct wds, so one user action enqueues one inotify record per wd
+    // (O_TRUNC and the write each queue their own IN_MODIFY, alternating
+    // between the two wds so the kernel coalesces nothing) atomically
+    // before the syscall returns; all records are read in one batch and
+    // the direct-delivery path must report the (kind, path) at most once.
+    auto p = make_test_dir();
+    auto file = p / "dup.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());     // directory entry
+    REQUIRE(w.add(file, false).is_ok());  // file entry
+
+    std::vector<FileEvent> pre;
+    REQUIRE(drain_until_empty(w, pre));
+    std::vector<FileEvent> post;
+
+    REQUIRE(pjh::platform::Fs::write_file(file, "v2").is_ok());
+    post = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, file); });
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) post.push_back(std::move(e));
+    }
+
+    auto count = [&](FileEventKind k, const std::filesystem::path &path) -> int
+    {
+        int n = 0;
+        for (const auto &e : post)
+            if (e.kind == k && e.path == path)
+                ++n;
+        return n;
+    };
+
+    // Pre-fix the twin delivers 2xModified in one batch.
+    CHECK_EQ(count(FileEventKind::Modified, file), 1);
+    // Purity: no other kind may be reported for the path.
+    CHECK_FALSE(
+        std::any_of(
+            post.begin(), post.end(),
+            [&](const FileEvent &e)
+            {
+                return e.path == file &&
+                       (e.kind == FileEventKind::Created || e.kind == FileEventKind::Deleted ||
+                        e.kind == FileEventKind::MovedFrom || e.kind == FileEventKind::MovedTo);
+            }));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
+}
+
+TEST_CASE("FileWatcher overlapping directory and file watch report a deletion once")
+{
+    auto p = make_test_dir();
+    auto file = p / "dup.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());     // directory entry
+    REQUIRE(w.add(file, false).is_ok());  // file entry
+
+    std::vector<FileEvent> pre;
+    REQUIRE(drain_until_empty(w, pre));
+    std::vector<FileEvent> post;
+
+    // Unlink enqueues the file's IN_DELETE_SELF|IN_IGNORED and the
+    // parent's IN_DELETE atomically before the call returns: the twin
+    // batch is deterministic, no race.
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+    REQUIRE_FALSE(ec);
+    post = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Deleted, file); });
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) post.push_back(std::move(e));
+    }
+
+    auto count = [&](FileEventKind k, const std::filesystem::path &path) -> int
+    {
+        int n = 0;
+        for (const auto &e : post)
+            if (e.kind == k && e.path == path)
+                ++n;
+        return n;
+    };
+
+    // Pre-fix the twin delivers 2xDeleted in one batch.
+    CHECK_EQ(count(FileEventKind::Deleted, file), 1);
+    // Purity: no other kind may be reported for the path.
+    CHECK_FALSE(
+        std::any_of(
+            post.begin(), post.end(),
+            [&](const FileEvent &e)
+            {
+                return e.path == file &&
+                       (e.kind == FileEventKind::Created || e.kind == FileEventKind::Modified);
+            }));
+
+    std::error_code rc;
+    std::filesystem::remove_all(p, rc);
+}
+
+TEST_CASE("FileWatcher overlapping directory and file watch report a rename once")
+{
+    auto p = make_test_dir();
+    auto file = p / "dup.txt";
+    auto target = p / "dup2.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "seed").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());     // directory entry
+    REQUIRE(w.add(file, false).is_ok());  // file entry
+
+    std::vector<FileEvent> pre;
+    REQUIRE(drain_until_empty(w, pre));
+    std::vector<FileEvent> post;
+
+    // The rename enqueues the file's IN_MOVE_SELF|IN_IGNORED plus the
+    // parent's IN_MOVED_FROM/IN_MOVED_TO atomically before the call
+    // returns: all records share the pair cookie, so the winner of the
+    // twin MovedFrom is irrelevant to the pins below.
+    std::error_code ec;
+    std::filesystem::rename(file, target, ec);
+    REQUIRE_FALSE(ec);
+    post = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::MovedTo, target); });
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) post.push_back(std::move(e));
+    }
+
+    auto count = [&](FileEventKind k, const std::filesystem::path &path) -> int
+    {
+        int n = 0;
+        for (const auto &e : post)
+            if (e.kind == k && e.path == path)
+                ++n;
+        return n;
+    };
+
+    // Pre-fix the twin delivers 2xMovedFrom(file) in one batch.
+    CHECK_EQ(count(FileEventKind::MovedFrom, file), 1);
+    CHECK_EQ(count(FileEventKind::MovedTo, target), 1);
+
+    // Cookie pin (winner-invariant): both halves present, cookies equal.
+    const FileEvent *from_ev = nullptr;
+    const FileEvent *to_ev = nullptr;
+    for (const auto &e : post)
+    {
+        if (e.kind == FileEventKind::MovedFrom && e.path == file)
+            from_ev = &e;
+        if (e.kind == FileEventKind::MovedTo && e.path == target)
+            to_ev = &e;
+    }
+    REQUIRE(from_ev != nullptr);
+    REQUIRE(to_ev != nullptr);
+    REQUIRE(from_ev->cookie.has_value());
+    REQUIRE(to_ev->cookie.has_value());
+    CHECK_EQ(*from_ev->cookie, *to_ev->cookie);
+
+    std::error_code rc;
+    std::filesystem::remove_all(p, rc);
+}
+
+TEST_CASE("FileWatcher overlapping watch does not collapse a create-delete-create cycle")
+{
+    // Over-suppression discriminator: a create/delete/create cycle of one
+    // path inside a single batch is a real net change and must emit every
+    // step; a blanket (kind, path) batch dedup without the same-entry
+    // exemption would swallow the second Created and fail the count pin.
+    // No file watch is involved: one directory entry only, so the twin is
+    // impossible and the pin stays green in both worlds.
+    auto p = make_test_dir();
+    auto g = p / "cycle.txt";
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());  // directory entry only
+
+    std::vector<FileEvent> pre;
+    REQUIRE(drain_until_empty(w, pre));
+    std::vector<FileEvent> post;
+
+    // Four syscalls, no poll between them: create (empty, no modify
+    // record), delete, create (empty), modify. Alternating kinds are never
+    // coalesced by the kernel (only identical consecutive records merge),
+    // so all four reach the batch.
+    int fd = ::open(g.c_str(), O_CREAT | O_WRONLY, 0644);
+    REQUIRE(fd >= 0);
+    ::close(fd);
+    std::error_code ec;
+    std::filesystem::remove(g, ec);
+    REQUIRE_FALSE(ec);
+    fd = ::open(g.c_str(), O_CREAT | O_WRONLY, 0644);
+    REQUIRE(fd >= 0);
+    ::close(fd);
+    REQUIRE(pjh::platform::Fs::write_file(g, "m").is_ok());
+
+    post = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Modified, g); });
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(10));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) post.push_back(std::move(e));
+    }
+
+    auto count = [&](FileEventKind k, const std::filesystem::path &path) -> int
+    {
+        int n = 0;
+        for (const auto &e : post)
+            if (e.kind == k && e.path == path)
+                ++n;
+        return n;
+    };
+
+    CHECK_EQ(count(FileEventKind::Created, g), 2);
+    CHECK_EQ(count(FileEventKind::Modified, g), 1);
+    // Deleted(g) is deliberately not pinned: it would couple the cycle
+    // pin to unrelated deletion semantics.
+
+    std::error_code rc;
+    std::filesystem::remove_all(p, rc);
+}
 #endif
 
 #if PJH_PLATFORM_UNIX

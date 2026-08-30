@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <pjh_platform/directory_diff.hpp>
 #include <pjh_platform/file_watcher.hpp>
@@ -51,6 +52,32 @@ namespace pjh::platform
                     if (e.kind == kind && e.path == path)
                         return;
                 out.push_back(FileEvent{kind, path, std::nullopt});
+            }
+
+            // Batch-level counterpart of emit_if_new for the direct-delivery
+            // path. An overlapping directory + file pair (post-03.4 two wds,
+            // pre-03.4 one shared wd held by both entries) delivers the same
+            // change twice in one batch, and one user action can queue the
+            // same (kind, path) record more than once per entry (O_TRUNC
+            // and the write each queue their own IN_MODIFY on both wds,
+            // alternating, so the kernel coalesces nothing). A (kind, path)
+            // repeat is suppressed while the path's last emitted kind is
+            // unchanged (a re-report); a repeat after a different kind was
+            // emitted for the path (a create/delete/create cycle) is a real
+            // net change and emits. The table dies with the poll call, so a
+            // repeat across batches is still re-reported.
+            auto direct_emit(
+                std::map<std::filesystem::path, FileEventKind> &last_kind,
+                std::vector<FileEvent> &out,
+                FileEventKind kind,
+                std::filesystem::path full,
+                std::optional<std::uint32_t> cookie) -> void
+            {
+                auto it = last_kind.find(full);
+                if (it != last_kind.end() && it->second == kind)
+                    return;  // same (kind, path), the path's state is unchanged
+                last_kind[full] = kind;
+                out.push_back(FileEvent{kind, std::move(full), cookie});
             }
 
             auto diff_and_emit(
@@ -550,6 +577,12 @@ namespace pjh::platform
             if (!impl.port)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
 
+            // Per-batch (kind, path) direct-emission tracking (see
+            // direct_emit). One completion per poll makes cross-entry twins
+            // impossible today; the table activates automatically if the
+            // drain ever processes several completions.
+            std::map<std::filesystem::path, FileEventKind> direct_last_kind;
+
             long long ms = timeout.count();
             if (ms < 0)
                 ms = 0;
@@ -616,7 +649,7 @@ namespace pjh::platform
                     }
                     else if (auto kind = action_to_kind(rec->Action))
                     {
-                        out.push_back(FileEvent{*kind, full, std::nullopt});
+                        direct_emit(direct_last_kind, out, *kind, full, std::nullopt);
                     }
                     if (rec->Action == FILE_ACTION_ADDED)
                     {
@@ -698,6 +731,11 @@ namespace pjh::platform
             if (rc == 0)
                 return pjh::result::Result<std::vector<FileEvent>, ErrorCode>::Ok(std::move(out));
 
+            // Per-batch (kind, path) direct-emission tracking (see
+            // direct_emit). Fresh per poll call: a repeat across batches is
+            // a real change and must be re-reported.
+            std::map<std::filesystem::path, FileEventKind> direct_last_kind;
+
             alignas(struct inotify_event) unsigned char buf[64 * 1024];
             for (;;)
             {
@@ -756,10 +794,12 @@ namespace pjh::platform
                             // be emitted before the erasure below runs.
                             auto kind = (ev->mask & IN_DELETE_SELF) ? FileEventKind::Deleted
                                                                     : FileEventKind::MovedFrom;
-                            FileEvent fe{kind, wit->second, std::nullopt};
-                            if (kind == FileEventKind::MovedFrom)
-                                fe.cookie = static_cast<std::uint32_t>(ev->cookie);
-                            out.push_back(std::move(fe));
+                            std::optional<std::uint32_t> cookie =
+                                (kind == FileEventKind::MovedFrom)
+                                    ? std::make_optional<std::uint32_t>(ev->cookie)
+                                    : std::nullopt;
+                            direct_emit(
+                                direct_last_kind, out, kind, wit->second, std::move(cookie));
                         }
                         if (ev->mask & IN_IGNORED)
                         {
@@ -775,13 +815,12 @@ namespace pjh::platform
                             continue;
                         if (auto kind = mask_to_kind(ev->mask))
                         {
-                            FileEvent fe;
-                            fe.kind = *kind;
-                            fe.path = full;
-                            if (*kind == FileEventKind::MovedFrom ||
-                                *kind == FileEventKind::MovedTo)
-                                fe.cookie = static_cast<std::uint32_t>(ev->cookie);
-                            out.push_back(std::move(fe));
+                            std::optional<std::uint32_t> cookie =
+                                (*kind == FileEventKind::MovedFrom ||
+                                 *kind == FileEventKind::MovedTo)
+                                    ? std::make_optional<std::uint32_t>(ev->cookie)
+                                    : std::nullopt;
+                            direct_emit(direct_last_kind, out, *kind, full, std::move(cookie));
                         }
                         if (e->recursive && (ev->mask & IN_ISDIR))
                         {
