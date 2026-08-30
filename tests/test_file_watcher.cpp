@@ -16,6 +16,7 @@
 
 #if PJH_PLATFORM_LINUX
 #include <fcntl.h>
+#include <sys/inotify.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -1275,6 +1276,93 @@ TEST_CASE("FileWatcher close releases shared watches without error")
     w.close();
     w.close();
     CHECK(w.poll(std::chrono::milliseconds(10)).is_err());
+}
+
+TEST_CASE("FileWatcher re-added watch survives a stale inotify ignored record")
+{
+    // Stale-ignored pin: the death record of a destroyed watch is consumed
+    // by the first poll after the path was re-created and re-added; if the
+    // kernel reused the freed wd number, that stale IN_IGNORED is
+    // indistinguishable from a fresh one by number alone and must not prune
+    // the new holder's record (pre-fix it did: the re-added watch went
+    // silently deaf until the next remove()+add()). Minimal wd universe:
+    // only `sub` is watched, so its death produces no companion signal.
+    auto p = make_test_dir();
+    auto sub = p / "sub";
+    REQUIRE(std::filesystem::create_directories(sub));
+
+    // A1 self-check on a dedicated inotify instance (independent of
+    // FileWatcher's instance): the re-add of the re-created directory must
+    // land on the freed number, otherwise the scenario is not constructible
+    // on this kernel and the case documents its skip (the overflow
+    // self-checks' precedent). A broken inotify environment fails loudly.
+    {
+        auto probe_dir = p / "probe" / "r";
+        REQUIRE(std::filesystem::create_directories(probe_dir));
+        int pfd = ::inotify_init();
+        REQUIRE(pfd >= 0);
+        REQUIRE(::fcntl(pfd, F_SETFL, O_NONBLOCK) >= 0);
+        int w1 = ::inotify_add_watch(pfd, probe_dir.c_str(), IN_ALL_EVENTS);
+        REQUIRE(w1 >= 0);
+        REQUIRE(std::filesystem::remove_all(probe_dir));
+        // Drain the probe directory's death record: the non-blocking read
+        // runs until the queue is empty (EAGAIN).
+        char buf[256] __attribute__((aligned(8)));
+        ssize_t n = ::read(pfd, buf, sizeof(buf));
+        while (n > 0)
+        {
+            n = ::read(pfd, buf, sizeof(buf));
+        }
+        REQUIRE(std::filesystem::create_directories(probe_dir));
+        int w2 = ::inotify_add_watch(pfd, probe_dir.c_str(), IN_ALL_EVENTS);
+        ::close(pfd);
+        if (w2 == -1 || w2 != w1)
+        {
+            // This kernel allocates wd numbers monotonically (the re-add
+            // got a fresh high-water number): the stale-ignored scenario is
+            // not constructible here. Documented silent skip, scratch
+            // removed before returning.
+            std::error_code ec;
+            std::filesystem::remove_all(p, ec);
+            return;
+        }
+    }
+
+    FileWatcher w;
+    REQUIRE(w.add(sub, false).is_ok());  // E1, wd X
+
+    // S1/S2 with zero polls between the death and the remove: the death
+    // record stays in the kernel queue (consumer-driven polling, no
+    // internal thread), so the first poll after the re-add consumes the
+    // stale IN_IGNORED and the fresh IN_CREATE in queue order.
+    REQUIRE(std::filesystem::remove_all(sub));
+    CHECK(w.remove(sub).is_ok());
+
+    // S3: the re-created directory resolves to a fresh inode; on the
+    // reusing kernel the fresh watch lands on the same freed wd number as
+    // the still-queued stale record (the probe above pinned the reuse).
+    REQUIRE(std::filesystem::create_directories(sub));
+    REQUIRE(w.add(sub, false).is_ok());
+
+    auto file = sub / "inside.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
+
+    // S4: the first poll drains both records in queue order.
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+
+    // A2: discriminator pin — green post-fix; pre-fix the stale record
+    // pruned the new holder's entry and this timed out red.
+    CHECK(has_event(events, FileEventKind::Created, file));
+
+    // A3: purity pin — a directory entry's death record carries no SELF
+    // part, so no Deleted(sub) may be emitted for the re-created directory
+    // in either world (guards a refactor emitting a spurious self-deletion
+    // for the re-created path).
+    CHECK_FALSE(has_event(events, FileEventKind::Deleted, sub));
+
+    std::error_code ec;
+    std::filesystem::remove_all(p, ec);
 }
 
 TEST_CASE("FileWatcher move-assignment does not leak the previous inotify instance")

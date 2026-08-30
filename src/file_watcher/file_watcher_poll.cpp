@@ -717,6 +717,21 @@ namespace pjh::platform
                         auto wit = e->wd_to_path.find(ev->wd);
                         if (wit == e->wd_to_path.end())
                             continue;
+                        if (ev->mask & IN_IGNORED)
+                        {
+                            // inotify records carry no generation: once a
+                            // freed wd number is reassigned to a new watch, a
+                            // stale IN_IGNORED for the dead watch is
+                            // indistinguishable from a fresh one by number
+                            // alone. If the path still exists, the record
+                            // refers to the pre-recreation inode: the current
+                            // occupant holds a live watch, and the record's
+                            // IN_DELETE_SELF part is stale for it as well.
+                            // Drop the record whole and keep the watch.
+                            std::error_code ec;
+                            if (std::filesystem::exists(wit->second, ec) && !ec)
+                                continue;
+                        }
                         if (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF))
                         {
                             // The only deletion/move-out signal a direct file
