@@ -44,13 +44,45 @@ namespace pjh::platform
                 return FileEventKind::Modified;
             }
 
-            auto emit_if_new(
-                std::vector<FileEvent> &out, FileEventKind kind, const std::filesystem::path &path)
-                -> void
+            // Membership index for the in-batch (kind, path) dedup of
+            // emit_if_new. std::hash provides no pair specialization in
+            // libstdc++/MSVC, so combine the two keys manually (quality
+            // affects speed, not equality; the pair's operator== decides).
+            using EmitKey = std::pair<FileEventKind, std::filesystem::path>;
+
+            struct EmitKeyHash
             {
-                for (const auto &e : out)
-                    if (e.kind == kind && e.path == path)
-                        return;
+                auto operator()(const EmitKey &key) const noexcept -> std::size_t
+                {
+                    const auto h1 = std::hash<std::filesystem::path>{}(key.second);
+                    const auto h2 = std::hash<int>{}(static_cast<int>(key.first));
+                    return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+                }
+            };
+
+            using EmitIndex = std::unordered_set<EmitKey, EmitKeyHash>;
+
+            // Seed the emit index from the full out (direct-delivery records
+            // included) so the dedup below sees the same entries the linear
+            // scan it replaces would have.
+            auto seed_emit_index(const std::vector<FileEvent> &out) -> EmitIndex
+            {
+                EmitIndex seen;
+                seen.reserve(out.size());
+                for (const auto &e : out) seen.insert(EmitKey{e.kind, e.path});
+                return seen;
+            }
+
+            auto emit_if_new(
+                std::vector<FileEvent> &out,
+                EmitIndex &seen,
+                FileEventKind kind,
+                const std::filesystem::path &path) -> void
+            {
+                auto key = EmitKey{kind, path};
+                if (seen.contains(key))
+                    return;
+                seen.insert(std::move(key));
                 out.push_back(FileEvent{kind, path, std::nullopt});
             }
 
@@ -85,7 +117,8 @@ namespace pjh::platform
                 const std::filesystem::path &dir,
                 const DirectorySnapshot &before,
                 DirectorySnapshot &&current,
-                std::vector<FileEvent> &out) -> DirectorySnapshot
+                std::vector<FileEvent> &out,
+                EmitIndex &seen) -> DirectorySnapshot
             {
                 auto dr = DirectoryDiff::compare(before, current);
                 if (dr.is_ok())
@@ -111,7 +144,7 @@ namespace pjh::platform
                             continue;
                         if (!entry.is_directory && ch.m_full_path != entry.path)
                             continue;
-                        emit_if_new(out, to_kind(ch.m_kind), ch.m_full_path);
+                        emit_if_new(out, seen, to_kind(ch.m_kind), ch.m_full_path);
                     }
                     // A directory reported as Created has no baseline yet;
                     // capture one now so later overflow diffs have a baseline
@@ -139,15 +172,15 @@ namespace pjh::platform
                         auto new_full = dir / r.m_new_filename;
                         if (entry.is_directory)
                         {
-                            emit_if_new(out, FileEventKind::MovedFrom, old_full);
-                            emit_if_new(out, FileEventKind::MovedTo, new_full);
+                            emit_if_new(out, seen, FileEventKind::MovedFrom, old_full);
+                            emit_if_new(out, seen, FileEventKind::MovedTo, new_full);
                         }
                         else
                         {
                             if (old_full == entry.path)
-                                emit_if_new(out, FileEventKind::MovedFrom, entry.path);
+                                emit_if_new(out, seen, FileEventKind::MovedFrom, entry.path);
                             if (new_full == entry.path)
-                                emit_if_new(out, FileEventKind::MovedTo, entry.path);
+                                emit_if_new(out, seen, FileEventKind::MovedTo, entry.path);
                         }
                     }
                 }
@@ -192,15 +225,17 @@ namespace pjh::platform
             }
 
             auto resync_directory(
-                WatchEntry &entry, const std::filesystem::path &dir, std::vector<FileEvent> &out)
-                -> void
+                WatchEntry &entry,
+                const std::filesystem::path &dir,
+                std::vector<FileEvent> &out,
+                EmitIndex &seen) -> void
             {
                 auto captured = DirectorySnapshot::capture(dir);
                 if (captured.is_err())
                 {
                     auto sit = entry.snapshots.find(dir);
                     if (sit != entry.snapshots.end() && entry.is_directory)
-                        emit_if_new(out, FileEventKind::Deleted, dir);
+                        emit_if_new(out, seen, FileEventKind::Deleted, dir);
                     prune_snapshots(entry, dir);
                     return;
                 }
@@ -209,7 +244,8 @@ namespace pjh::platform
                 if (sit == entry.snapshots.end())
                     entry.snapshots[dir] = std::move(current);
                 else
-                    sit->second = diff_and_emit(entry, dir, sit->second, std::move(current), out);
+                    sit->second =
+                        diff_and_emit(entry, dir, sit->second, std::move(current), out, seen);
             }
 #endif  // PJH_PLATFORM_LINUX || PJH_PLATFORM_WINDOWS
 
@@ -253,6 +289,11 @@ namespace pjh::platform
             auto resync_linux(FileWatcherImpl &impl, WatchEntry &entry, std::vector<FileEvent> &out)
                 -> void
             {
+                // Seed the emit index from the full out (direct-delivery
+                // records included). Invariant: between this seed and the last
+                // index use in this call, out is mutated only by emit_if_new
+                // (no direct push runs inside this resync).
+                EmitIndex emit_seen = seed_emit_index(out);
                 if (!entry.is_directory)
                 {
                     // A direct file watch has no directory baseline to diff
@@ -264,9 +305,9 @@ namespace pjh::platform
                     // be reported Modified once.
                     std::error_code ec;
                     if (std::filesystem::exists(entry.path, ec) && !ec)
-                        emit_if_new(out, FileEventKind::Modified, entry.path);
+                        emit_if_new(out, emit_seen, FileEventKind::Modified, entry.path);
                     else
-                        emit_if_new(out, FileEventKind::Deleted, entry.path);
+                        emit_if_new(out, emit_seen, FileEventKind::Deleted, entry.path);
                     // Re-attach the watch to whatever inode now occupies the
                     // path (idempotent for a still-live watch, which returns
                     // the existing descriptor). If the path is gone the watch
@@ -355,7 +396,7 @@ namespace pjh::platform
                         entry.wd_to_path[wd] = dir;
                 }
 
-                for (const auto &dir : current_dirs) resync_directory(entry, dir, out);
+                for (const auto &dir : current_dirs) resync_directory(entry, dir, out, emit_seen);
 
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                 {
@@ -394,8 +435,12 @@ namespace pjh::platform
                 // delivered directly (bounded to the window since the last
                 // baseline). The net change is still reported; nothing is
                 // silently lost.
+                // Seed the emit index from the full out before any emission
+                // below; between seed and last use, out is mutated only by
+                // emit_if_new (no direct push runs inside this resync).
+                EmitIndex emit_seen = seed_emit_index(out);
                 auto current_dirs = tree_dirs(entry);
-                for (const auto &dir : current_dirs) resync_directory(entry, dir, out);
+                for (const auto &dir : current_dirs) resync_directory(entry, dir, out, emit_seen);
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                 {
                     if (std::find(current_dirs.begin(), current_dirs.end(), sit->first) ==
@@ -411,6 +456,10 @@ namespace pjh::platform
 #if PJH_PLATFORM_MACOS
         auto process_fsevents(WatchEntry &entry, std::vector<FileEvent> &out) -> void
         {
+            // Seed the emit index from the full out before any emission
+            // below; between seed and last use, out is mutated only by
+            // emit_if_new (no direct push runs on macOS).
+            EmitIndex emit_seen = seed_emit_index(out);
             std::vector<std::filesystem::path> unique_dirs;
             unique_dirs.reserve(entry.pending_events.size());
             std::set<std::filesystem::path> seen;
@@ -481,7 +530,7 @@ namespace pjh::platform
                     if (it != entry.snapshots.end())
                     {
                         if (entry.is_directory)
-                            emit_if_new(out, FileEventKind::Deleted, d);
+                            emit_if_new(out, emit_seen, FileEventKind::Deleted, d);
                         for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                         {
                             if (sit->first == d || path_is_under(sit->first, d))
@@ -509,14 +558,15 @@ namespace pjh::platform
                             if (pc.is_ok())
                                 pit->second = diff_and_emit(
                                     entry, d.parent_path(), pit->second, std::move(pc).unwrap(),
-                                    out);
+                                    out, emit_seen);
                         }
                     }
                     entry.snapshots[d] = std::move(current);
                 }
                 else
                 {
-                    it->second = diff_and_emit(entry, d, it->second, std::move(current), out);
+                    it->second =
+                        diff_and_emit(entry, d, it->second, std::move(current), out, emit_seen);
                 }
             }
 
@@ -548,7 +598,7 @@ namespace pjh::platform
                         auto it = entry.snapshots.find(dir);
                         if (it != entry.snapshots.end())
                         {
-                            emit_if_new(out, FileEventKind::Deleted, dir);
+                            emit_if_new(out, emit_seen, FileEventKind::Deleted, dir);
                             for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                             {
                                 if (sit->first == dir || path_is_under(sit->first, dir))
@@ -562,7 +612,8 @@ namespace pjh::platform
                     auto cur = std::move(captured).unwrap();
                     auto dit = entry.snapshots.find(dir);
                     if (dit != entry.snapshots.end())
-                        dit->second = diff_and_emit(entry, dir, dit->second, std::move(cur), out);
+                        dit->second =
+                            diff_and_emit(entry, dir, dit->second, std::move(cur), out, emit_seen);
                 }
             }
         }
