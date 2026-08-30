@@ -1480,9 +1480,9 @@ TEST_CASE("FileWatcher overlapping directory and file watch report a deletion on
     REQUIRE(drain_until_empty(w, pre));
     std::vector<FileEvent> post;
 
-    // Unlink enqueues the file's IN_DELETE_SELF|IN_IGNORED and the
-    // parent's IN_DELETE atomically before the call returns: the twin
-    // batch is deterministic, no race.
+    // Unlink enqueues the file's IN_DELETE_SELF and IN_IGNORED as two
+    // separate records plus the parent's IN_DELETE, atomically before the
+    // call returns: the twin batch is deterministic, no race.
     std::error_code ec;
     std::filesystem::remove(file, ec);
     REQUIRE_FALSE(ec);
@@ -1535,10 +1535,12 @@ TEST_CASE("FileWatcher overlapping directory and file watch report a rename once
     REQUIRE(drain_until_empty(w, pre));
     std::vector<FileEvent> post;
 
-    // The rename enqueues the file's IN_MOVE_SELF|IN_IGNORED plus the
-    // parent's IN_MOVED_FROM/IN_MOVED_TO atomically before the call
-    // returns: all records share the pair cookie, so the winner of the
-    // twin MovedFrom is irrelevant to the pins below.
+    // The rename enqueues three records atomically before the call
+    // returns: the parent's IN_MOVED_FROM and IN_MOVED_TO carry the pair
+    // cookie, while the file's IN_MOVE_SELF carries cookie 0, not the pair
+    // cookie (the pre-fix 0 != C red is the direct evidence). The in-batch
+    // dedup table suppresses the cookie-0 replay, so the surviving
+    // MovedFrom is the parent-side record.
     std::error_code ec;
     std::filesystem::rename(file, target, ec);
     REQUIRE_FALSE(ec);
@@ -1588,7 +1590,7 @@ TEST_CASE("FileWatcher overlapping watch does not collapse a create-delete-creat
 {
     // Over-suppression discriminator: a create/delete/create cycle of one
     // path inside a single batch is a real net change and must emit every
-    // step; a blanket (kind, path) batch dedup without the same-entry
+    // step; a blanket (kind, path) batch dedup without the kind-change
     // exemption would swallow the second Created and fail the count pin.
     // No file watch is involved: one directory entry only, so the twin is
     // impossible and the pin stays green in both worlds.
