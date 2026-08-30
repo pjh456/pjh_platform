@@ -80,6 +80,24 @@ namespace pjh::platform
     ///          high-churn directories (for example `/tmp`) this filter work
     ///          grows with the directory's change rate, so prefer watching the
     ///          file's own dedicated directory when possible.
+    ///          If the root of a directory watch is renamed away, the
+    ///          platforms diverge:
+    ///          - On Linux the watch follows the directory's inode: the
+    ///            subtree keeps being covered and its changes keep being
+    ///            reported, but under the original (now stale) path, so
+    ///            duplicate reports are possible while every net change is
+    ///            still reported; no event is emitted for the root's own
+    ///            rename. An event queue overflow that happens while the root
+    ///            is absent does not tear down the watch set or the stored
+    ///            baselines.
+    ///          - On Windows and macOS the watch is anchored to the path
+    ///            passed to `add` and is never re-anchored to the new path.
+    ///            On Windows the entry stops reporting once the gone path is
+    ///            reported by the in-flight read (the `poll` that observes it
+    ///            reports `Failure(NotFound)`) and stays registered. On macOS
+    ///            the stream stops delivering events for the original path.
+    ///          To continue coverage at the new path on any platform, `remove`
+    ///          the original path and `add` the new one.
     ///
     /// @warning Not thread-safe; concurrent calls from multiple threads need
     ///          external synchronization.
