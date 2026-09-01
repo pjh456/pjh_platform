@@ -1,5 +1,10 @@
+include(FetchContent)
+FetchContent_Declare(doctest
+    GIT_REPOSITORY https://github.com/doctest/doctest.git
+    GIT_TAG v2.5.0)
+
 set(DOCTEST_WITH_MAIN_IN_STATIC_LIB OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/doctest ${CMAKE_BINARY_DIR}/thirdparty/doctest EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(doctest)
 
 set(PJH_PLATFORM_TEST_SOURCES
     test_main.cpp
@@ -17,5 +22,5 @@ set(PJH_PLATFORM_TEST_SOURCES
 add_executable(pjh_platform_tests ${PJH_PLATFORM_TEST_SOURCES})
 target_link_libraries(pjh_platform_tests PRIVATE pjh_platform doctest)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/doctest/scripts/cmake/doctest.cmake)
+include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(pjh_platform_tests)
