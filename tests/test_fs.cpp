@@ -4,7 +4,14 @@
 #include <iostream>
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/os.hpp>
+#include <pjh_platform/platform.hpp>
 
+#if PJH_PLATFORM_UNIX
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+using pjh::platform::ErrorCode;
 using pjh::platform::Fs;
 
 TEST_CASE("Fs::current_path returns non-empty path")
@@ -506,3 +513,104 @@ TEST_CASE("Fs::relative fails when paths share no common root")
         CHECK_EQ(r.unwrap_err(), pjh::platform::ErrorCode::InvalidArgument);
     }
 }
+
+TEST_CASE("Fs::write_file returns NotFound when the parent directory is missing")
+{
+    auto parent = Fs::temp_directory() / "pjh_platform_test_write_missing_parent";
+    std::error_code rec;
+    std::filesystem::remove_all(parent, rec);  // defensive: stale scratch
+    auto r = Fs::write_file(parent / "f.txt", "x");
+    CHECK(r.is_err());                              // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);  // A2 (pre-fix red: IoError)
+    // Positive control: with the parent present, the write succeeds.
+    REQUIRE(std::filesystem::create_directories(parent));  // A3
+    CHECK(Fs::write_file(parent / "f.txt", "x").is_ok());  // A4
+    std::filesystem::remove_all(parent, rec);
+}
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::write_file returns PermissionDenied when the parent directory is unwritable")
+{
+    auto p = Fs::temp_directory() / "pjh_platform_test_write_perm_dir";
+    std::error_code sec;
+    std::filesystem::remove_all(p, sec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(p));
+    auto original = std::filesystem::status(p, sec).permissions();
+    REQUIRE_FALSE(sec);
+    std::filesystem::permissions(p, std::filesystem::perms::none, sec);
+    REQUIRE_FALSE(sec);
+    // Self-skip probe: if a file can still be created inside the 000
+    // directory, EACCES cannot be manufactured here (privileged process,
+    // e.g. root on CI): restore and skip (task 16 precedent, documented
+    // silent skip).
+    {
+        int probe = ::open(((p / "probe").string()).c_str(), O_WRONLY | O_CREAT, 0644);
+        if (probe != -1)
+        {
+            ::close(probe);
+            std::filesystem::remove(p / "probe", sec);
+            std::filesystem::permissions(p, original, sec);
+            std::filesystem::remove_all(p, sec);
+            return;
+        }
+    }
+    {
+        // Restores the mode on every exit path (including a REQUIRE
+        // failure's unwind); a leaked 000 directory would break the next
+        // case's remove_all.
+        struct RestorePermissions
+        {
+            std::filesystem::path dir;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(dir, perms, ec);
+            }
+        } guard{p, original};
+        // Positive control in a writable sibling (inside p is impossible
+        // while p is 000).
+        auto sib = p.parent_path() / "pjh_platform_test_write_perm_sib";
+        std::filesystem::create_directories(sib);
+        CHECK(Fs::write_file(sib / "s.txt", "x").is_ok());  // B1
+        std::filesystem::remove_all(sib, sec);
+        auto r = Fs::write_file(p / "f.txt", "x");
+        CHECK(r.is_err());                                      // B2
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // B3 (pre-fix red: IoError)
+    }
+    std::filesystem::remove_all(p, sec);
+}
+#endif
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE("Fs::write_file returns PermissionDenied when the file is read-only")
+{
+    auto f = Fs::temp_directory() / "pjh_platform_test_write_readonly.txt";
+    std::error_code sec;
+    std::filesystem::remove(f, sec);           // defensive: stale scratch
+    CHECK(Fs::write_file(f, "seed").is_ok());  // C1 (positive control)
+    auto original = std::filesystem::permissions(f, sec);
+    REQUIRE_FALSE(sec);
+    std::filesystem::permissions(
+        f, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace, sec);
+    REQUIRE_FALSE(sec);
+    {
+        struct RestorePermissions
+        {
+            std::filesystem::path file;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(file, perms, ec);
+            }
+        } guard{f, original};
+        auto r = Fs::write_file(f, "x");
+        CHECK(r.is_err());                                      // C2
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // C3 (pre-fix red: IoError)
+    }
+    std::filesystem::remove(f, sec);
+}
+#endif

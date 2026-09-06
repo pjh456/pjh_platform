@@ -201,8 +201,10 @@ namespace pjh::platform
          * @param p Destination path.
          * @param content Bytes to write.
          *
-         * @return `Ok()` on success; `Failure(IoError)` if the file cannot be
-         *         opened or a write fails.
+         * @return `Ok()` on success; `Failure(NotFound)` if the parent directory
+         *         of @p p does not exist, `Failure(PermissionDenied)` on access
+         *         errors, or `Failure(IoError)` if the file cannot be opened for
+         *         another reason or a write fails.
          *
          * @exception Never throws.
          *

@@ -236,7 +236,14 @@ namespace pjh::platform
         HANDLE hFile = CreateFileW(
             p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile == INVALID_HANDLE_VALUE)
+        {
+            DWORD err = GetLastError();
+            if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+            if (err == ERROR_ACCESS_DENIED)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
 
         if (!content.empty())
         {
@@ -257,7 +264,13 @@ namespace pjh::platform
         int fd =
             ::open(p.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         if (fd == -1)
+        {
+            if (errno == ENOENT)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
+            if (errno == EACCES)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
 
         if (!content.empty())
         {
