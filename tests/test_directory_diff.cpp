@@ -9,6 +9,7 @@
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/fs.hpp>
+#include <pjh_platform/platform.hpp>
 #include <string>
 #include <vector>
 
@@ -606,4 +607,25 @@ TEST_CASE("DirectoryDiff detect_renames benchmark gated by PJH_RENAME_STORM_BENC
                   << " iters=" << iters << " total_us=" << total_us
                   << " us_per_run=" << total_us / iters << "\n";
     }
+}
+
+TEST_CASE("DirectoryDiff reports no change when a broken symbolic link appears")
+{
+#if PJH_PLATFORM_UNIX
+    auto p = make_test_dir("broken_link");
+    auto before = DirectorySnapshot::capture(p);
+    REQUIRE(before.is_ok());
+    std::error_code sec;
+    std::filesystem::create_symlink(p / "no_such_target_12345", p / "broken", sec);
+    REQUIRE_FALSE(sec);
+    auto after = DirectorySnapshot::capture(p);
+    REQUIRE(after.is_ok());
+
+    // The link is invisible to both captures (hpp:68 contract), so its
+    // appearance must produce no changes: no spurious Created/Deleted for
+    // the diff consumer.
+    auto diff = DirectoryDiff::compare(before.unwrap(), after.unwrap());
+    REQUIRE(diff.is_ok());
+    CHECK(diff.unwrap().changes().empty());
+#endif
 }

@@ -490,3 +490,25 @@ TEST_CASE("DirectorySnapshot hash-list matching benchmark gated by PJH_HASH_MATC
     std::cout << "hash-match-bench: files=" << n << " list=" << list.size() << " iters=" << iters
               << " total_us=" << total_us << " us_per_run=" << total_us / iters << "\n";
 }
+
+TEST_CASE("DirectorySnapshot skips broken symbolic links")
+{
+#if PJH_PLATFORM_UNIX
+    auto p = make_test_dir();
+    std::error_code sec;
+    std::filesystem::create_symlink(p / "no_such_target_12345", p / "broken", sec);
+    REQUIRE_FALSE(sec);
+    REQUIRE(pjh::platform::Fs::write_file(p / "live.txt", "x").is_ok());
+
+    auto r = DirectorySnapshot::capture(p);
+    REQUIRE(r.is_ok());
+    auto snap = std::move(r).unwrap();
+
+    // hpp:68 contract: broken links are skipped by capture, so no phantom
+    // entry (size 0 / mtime 0 / hash nullopt) may appear in the snapshot.
+    CHECK_FALSE(snap.contains("broken"));
+    CHECK_EQ(snap.file_count(), 1u);
+    CHECK_EQ(snap.dir_count(), 0u);
+    CHECK(snap.contains("live.txt"));
+#endif
+}
