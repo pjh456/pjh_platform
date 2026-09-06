@@ -134,6 +134,9 @@ namespace pjh::platform
         /**
          * @brief Checks whether @p p is a directory.
          *
+         * @details Symbolic links are followed: a link to a directory
+         *          returns `true`.
+         *
          * @param p Path to test.
          *
          * @return `true` if @p p names a directory, `false` otherwise
