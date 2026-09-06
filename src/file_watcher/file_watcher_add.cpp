@@ -179,6 +179,7 @@ namespace pjh::platform
 
                 if (entry.recursive)
                 {
+                    int first_errno = 0;
                     std::error_code ec;
                     for (auto it = std::filesystem::recursive_directory_iterator(
                              entry.watch_root,
@@ -194,8 +195,34 @@ namespace pjh::platform
                         if (!it->is_directory(sec))
                             continue;
                         int wd = ::inotify_add_watch(impl.fd, it->path().c_str(), watch_mask());
-                        if (wd != -1)
-                            entry.wd_to_path[wd] = it->path();
+                        if (wd == -1)
+                        {
+                            // EACCES/EPERM: the documented skip (header
+                            // @details, unreadable subdirectories); any other
+                            // errno (notably ENOSPC, mid-walk slot
+                            // exhaustion) aborts: a silently unwatched
+                            // subtree is a coverage loss, and add()
+                            // must not return Ok for it.
+                            if (errno == EACCES || errno == EPERM)
+                                continue;
+                            if (!first_errno)
+                                first_errno = errno;
+                            break;
+                        }
+                        entry.wd_to_path[wd] = it->path();
+                    }
+                    if (first_errno)
+                    {
+                        // Release everything this registration took
+                        // (root wd included: it is in wd_to_path from the
+                        // root registration above). Shared wds survive:
+                        // release_watch's holder scan skips any wd another
+                        // live entry still holds.
+                        for (const auto &[wd, unused] : entry.wd_to_path)
+                            release_watch(impl, entry, wd);
+                        entry.wd_to_path.clear();
+                        entry.root_wd = -1;  // hygiene; the entry is destroyed by the caller
+                        return pjh::result::Failure<ErrorCode>{map_errno_to_error(first_errno)};
                     }
                 }
             }

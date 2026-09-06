@@ -536,6 +536,40 @@ namespace
         return limit;
     }
 
+    // How many more watches the user's inotify pool (max_user_watches,
+    // shared across all of the user's processes and instances) will accept:
+    // own instance (18-probe precedent: the probe uses its own instance, so
+    // the count is order-independent of any FileWatcher), watch every
+    // subdirectory of `root` until the kernel refuses, close the instance
+    // (releases all of its watches). Returns the count that fit; a refusal
+    // that is not ENOSPC (pathological kernel) still ends the count, which
+    // keeps both budget probes of the mid-walk exhaustion case on one rule.
+    auto probe_inotify_budget(const std::filesystem::path &root) -> int
+    {
+        int fd = ::inotify_init1(IN_NONBLOCK);
+        REQUIRE(fd >= 0);
+        int fitted = 0;
+        std::error_code ec;
+        for (auto it = std::filesystem::recursive_directory_iterator(
+                 root, std::filesystem::directory_options::skip_permission_denied, ec);
+             it != std::filesystem::recursive_directory_iterator(); ++it)
+        {
+            if (ec)
+            {
+                ec.clear();
+                continue;
+            }
+            std::error_code sec;
+            if (!it->is_directory(sec))
+                continue;
+            if (::inotify_add_watch(fd, it->path().c_str(), IN_ALL_EVENTS) == -1)
+                break;
+            ++fitted;
+        }
+        ::close(fd);
+        return fitted;
+    }
+
     // Poll until a batch comes back empty, appending every batch to `out`;
     // returns false when a poll fails or 200 polls (2 s) did not empty the
     // queue.
@@ -1885,6 +1919,100 @@ TEST_CASE("FileWatcher keeps recursive coverage after the root is renamed away i
     // p is gone (renamed): remove_all(p) is a no-op; p2 carries the tree.
     std::filesystem::remove_all(p2, ec);
     std::filesystem::remove_all(p, ec);
+}
+#endif
+
+#if PJH_PLATFORM_LINUX
+TEST_CASE("FileWatcher recursive add fails LimitReached when the watch budget exhausts mid-walk")
+{
+    // Pre-fix: a mid-walk ENOSPC was silently skipped and add() returned
+    // Ok with partial coverage (the unwatched subtrees report nothing,
+    // ever, on the normal poll path); post-fix registration is
+    // all-or-nothing and the mapped error surfaces.
+    auto p = make_test_dir();
+
+    int limit = read_inotify_limit();
+    if (limit < 2 || limit > 65536)
+    {
+        // Documented self-skip (14/16 cap-guard precedent, test :1731):
+        // budget too small to construct the scenario (root + >=2 subdirs),
+        // or too large to be worth mkdir-ing (wall-clock bound).
+        std::error_code rec;
+        std::filesystem::remove_all(p, rec);
+        return;
+    }
+
+    for (int i = 0; i < limit + 16; ++i)
+    {
+        char name[16] = {};
+        std::snprintf(name, sizeof(name), "d_%06d", i);
+        std::error_code sec;
+        std::filesystem::create_directories(p / name, sec);
+        REQUIRE_FALSE(sec);
+    }
+
+    int before = probe_inotify_budget(p);
+    if (before < 4)
+    {
+        // Headroom guard: other processes hold most of the user pool;
+        // exhaustion would not be caused by this add and P3 could not
+        // run. Documented self-skip (restore the sandbox).
+        std::error_code rec;
+        std::filesystem::remove_all(p, rec);
+        return;
+    }
+
+    // Upper headroom guard (re-anchored construction): the tree is sized
+    // from the queue limit, but the pool it exhausts is max_user_watches,
+    // which on this kernel family is not that value. When every tree
+    // directory plus a canary fit the pool, the mid-walk exhaustion is
+    // unconstructible within the wall-clock bound: documented self-skip
+    // instead of a false red on the fixed tree. A canary refusal means the
+    // pool holds exactly the tree's budget and the walk still exhausts at
+    // its last directory.
+    if (before == limit + 16)
+    {
+        auto canary = p / "d_canary";
+        std::error_code csec;
+        std::filesystem::create_directories(canary, csec);
+        REQUIRE_FALSE(csec);
+        int canary_fd = ::inotify_init1(IN_NONBLOCK);
+        REQUIRE(canary_fd >= 0);
+        bool canary_fit = ::inotify_add_watch(canary_fd, canary.c_str(), IN_ALL_EVENTS) != -1;
+        ::close(canary_fd);
+        if (canary_fit)
+        {
+            std::error_code rec;
+            std::filesystem::remove_all(p, rec);
+            return;
+        }
+    }
+
+    FileWatcher w;
+    auto r = w.add(p, true);
+
+    // P1 (main pin, pre-fix red): mid-walk exhaustion is the documented
+    // LimitReached failure, not absorbed as Ok(partial coverage).
+    REQUIRE(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::LimitReached);
+
+    // P2 (teardown pin): the failed add released everything it registered
+    // (root + the subdirs that fit); the pool budget is exactly what it
+    // was before the add.
+    CHECK_EQ(probe_inotify_budget(p), before);
+
+    // P3 (liveness pin): the watcher is still fully usable after the
+    // failed registration (no zombie state, no leaked slots).
+    auto r2 = w.add(p, false);
+    REQUIRE(r2.is_ok());
+    auto probe_file = p / "after.txt";
+    REQUIRE(pjh::platform::Fs::write_file(probe_file, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, probe_file); });
+    CHECK(has_event(events, FileEventKind::Created, probe_file));
+
+    std::error_code rec;
+    std::filesystem::remove_all(p, rec);
 }
 #endif
 

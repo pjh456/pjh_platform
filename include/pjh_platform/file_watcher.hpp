@@ -148,6 +148,10 @@ namespace pjh::platform
          *          too; the flag is ignored when @p path is a file.
          *          Subdirectories that cannot be opened (permission denied)
          *          are skipped: not watched, no events from inside them.
+         *          Recursive registration is all-or-nothing: if the
+         *          platform watch limit is hit mid-walk, the watches
+         *          registered during the walk are released and
+         *          `Failure(LimitReached)` is returned.
          *
          * @param path Path to watch.
          * @param recursive Watch subdirectories recursively (directories only).
