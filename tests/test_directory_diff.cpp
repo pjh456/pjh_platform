@@ -186,6 +186,57 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
     CHECK(diff.unwrap().empty());
 }
 
+TEST_CASE("DirectoryDiff reports a file-to-directory type flip as deleted and created")
+{
+    auto p = make_test_dir("flip_fd");
+    auto x = p / "x";
+    REQUIRE(pjh::platform::Fs::write_file(x, "data").is_ok());
+    auto before = DirectorySnapshot::capture(p);
+    REQUIRE(before.is_ok());
+
+    REQUIRE(std::filesystem::remove(x));
+    REQUIRE(std::filesystem::create_directories(x));
+    auto after = DirectorySnapshot::capture(p);
+    REQUIRE(after.is_ok());
+
+    auto before_snap = before.unwrap();
+    auto after_snap = after.unwrap();
+    auto diff = DirectoryDiff::compare(before_snap, after_snap);
+    REQUIRE(diff.is_ok());
+    auto changes = diff.unwrap().changes();
+    REQUIRE_EQ(changes.size(), 2u);
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Deleted, x));
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Created, x));
+    CHECK_FALSE(has_change(changes, DirectoryDiff::ChangeKind::Modified, x));
+
+    auto renames = diff.unwrap().detect_renames(before_snap, after_snap);
+    CHECK(renames.empty());
+}
+
+TEST_CASE("DirectoryDiff reports a directory-to-file type flip as deleted and created")
+{
+    auto p = make_test_dir("flip_df");
+    auto x = p / "x";
+    REQUIRE(std::filesystem::create_directories(x));
+    auto before = DirectorySnapshot::capture(p);
+    REQUIRE(before.is_ok());
+
+    REQUIRE(std::filesystem::remove_all(x));
+    REQUIRE(pjh::platform::Fs::write_file(x, "data").is_ok());
+    auto after = DirectorySnapshot::capture(p);
+    REQUIRE(after.is_ok());
+
+    auto before_snap = before.unwrap();
+    auto after_snap = after.unwrap();
+    auto diff = DirectoryDiff::compare(before_snap, after_snap);
+    REQUIRE(diff.is_ok());
+    auto changes = diff.unwrap().changes();
+    REQUIRE_EQ(changes.size(), 2u);
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Deleted, x));
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Created, x));
+    CHECK_FALSE(has_change(changes, DirectoryDiff::ChangeKind::Modified, x));
+}
+
 TEST_CASE("DirectoryDiff rejects snapshots of different directories")
 {
     auto p1 = make_test_dir("one");

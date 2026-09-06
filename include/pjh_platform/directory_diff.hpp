@@ -19,6 +19,8 @@ namespace pjh::platform
      *          (`Deleted`), and which regular files changed (`Modified`).
      *          Directories are never reported as `Modified`; a directory's
      *          changes surface as `Created`/`Deleted` of the affected children.
+     *          A same-name entry flipping between a regular file and a
+     *          directory is reported as a `Deleted`/`Created` pair.
      *
      * @platform Windows, Linux, macOS.
      */

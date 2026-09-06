@@ -48,6 +48,17 @@ namespace pjh::platform
             {
                 changes.push_back(Change{ChangeKind::Created, name, after.dir_path() / name});
             }
+            else if (old->second.m_is_directory != entry.m_is_directory)
+            {
+                // Same-name entry flipped between a regular file and a
+                // directory: the old entry disappeared and a new one
+                // appeared, so emit a Deleted/Created pair (a directory is
+                // never Modified). detect_renames() cannot pair this pair:
+                // created directories are excluded from candidates and
+                // deleted directories never pair.
+                changes.push_back(Change{ChangeKind::Deleted, name, before.dir_path() / name});
+                changes.push_back(Change{ChangeKind::Created, name, after.dir_path() / name});
+            }
             else if (!entry.m_is_directory && !entries_match(old->second, entry))
             {
                 changes.push_back(Change{ChangeKind::Modified, name, after.dir_path() / name});
