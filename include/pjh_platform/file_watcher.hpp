@@ -140,15 +140,19 @@ namespace pjh::platform
         /**
          * @brief Starts watching @p path (a file or a directory).
          *
-         * @details The path is normalized to an absolute path first. On Linux
-         *          a file is watched directly on its own inode; on Windows
-         *          and macOS a file is watched through its parent directory.
-         *          Directories are watched directly. For directories,
-         *          @p recursive controls whether subdirectories are watched
-         *          too; the flag is ignored when @p path is a file.
-         *          Subdirectories that cannot be opened (permission denied)
-         *          are skipped: not watched, no events from inside them.
-         *          Recursive registration is all-or-nothing: if the
+         * @details The path is normalized to an absolute path first. A path
+         *          that resolves to the same file or directory as an already
+         *          watched path (for example, a symbolic link and its target)
+         *          is the same watch: the second registration fails with
+         *          `Failure(AlreadyWatched)`.
+         *          On Linux a file is watched directly on its own inode; on
+         *          Windows and macOS a file is watched through its parent
+         *          directory. Directories are watched directly. For
+         *          directories, @p recursive controls whether subdirectories
+         *          are watched too; the flag is ignored when @p path is a
+         *          file. Subdirectories that cannot be opened (permission
+         *          denied) are skipped: not watched, no events from inside
+         *          them. Recursive registration is all-or-nothing: if the
          *          platform watch limit is hit mid-walk, the watches
          *          registered during the walk are released and
          *          `Failure(LimitReached)` is returned.

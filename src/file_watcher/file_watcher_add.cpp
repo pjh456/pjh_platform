@@ -256,9 +256,32 @@ namespace pjh::platform
             return pjh::result::Failure<ErrorCode>{abs.unwrap_err()};
         std::filesystem::path absolute = std::move(abs).unwrap();
 
+        // Identity is canonical, not lexical: a different spelling of the
+        // same file or directory (a symbolic link and its target, the OS
+        // alias pair /tmp vs /private/tmp) would register a second entry,
+        // and the platform routing then delivers every change once per
+        // entry, one event per spelling, which the per-batch (kind, path)
+        // tables cannot suppress because the spellings differ. Reject the
+        // second spelling at registration. weakly_canonical resolves the
+        // existing prefix without requiring the path to exist and cannot
+        // throw; on a query error (symlink loop, unreadable component) fall
+        // open to the lexical comparison above, which is today's behavior.
+        std::error_code cec;
+        auto canonical = std::filesystem::weakly_canonical(absolute, cec);
+        const bool canonical_ok = !cec;
         for (const auto &existing : impl.entries)
+        {
             if (existing->path == absolute)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyWatched};
+            if (!canonical_ok)
+                continue;
+            std::error_code xec;
+            auto existing_canonical = std::filesystem::weakly_canonical(existing->path, xec);
+            if (xec)
+                continue;
+            if (canonical == existing_canonical)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyWatched};
+        }
 
         std::error_code ec;
         if (!std::filesystem::exists(absolute, ec))

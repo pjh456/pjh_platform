@@ -520,6 +520,72 @@ TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
     std::filesystem::remove_all(p, ec);
 }
 
+TEST_CASE("FileWatcher add rejects a directory symbolic link alias (cross-poll twin)")
+{
+    auto p = make_test_dir();
+    auto link = p.parent_path() / "pjh_platform_watch_alias";
+    std::error_code rec;
+    std::filesystem::remove(link, rec);  // defensive
+    std::error_code sec;
+    std::filesystem::create_directory_symlink(p, link, sec);
+    if (sec)
+    {
+        // No symbolic-link privilege (SeCreateSymbolicLinkPrivilege /
+        // developer mode) on this runner: the alias scenario is
+        // unconstructible, documented silent skip.
+        std::filesystem::remove_all(p, rec);
+        return;
+    }
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    // A2 (discriminator, red pre-fix) + candidate 5 closure line: pre-fix
+    // the alias registered a second handle on the same directory and one
+    // user action queued one ReadDirectoryChangesW completion per handle;
+    // a single GetQueuedCompletionStatus per poll drains one packet per
+    // call, so the two packets landed on separate poll() calls, one event
+    // per spelling — the cross-poll twin the per-batch (kind, path) table
+    // (path-keyed, dying with the poll call) can never suppress. Post-fix
+    // the alias never registers, so the alias-driven multi-completion
+    // surface this table comment (see the "table activates automatically"
+    // note in the Windows arm of platform_poll) describes is unreachable;
+    // the surviving multi-completion surface is the legitimate
+    // directory+file overlap pair, whose cross-poll repeat is the
+    // accepted bounded re-report (R1 band), not a defect mode.
+    auto dup = w.add(link, false);
+    CHECK(dup.is_err());
+    CHECK_EQ(dup.unwrap_err(), ErrorCode::AlreadyWatched);
+
+    // A3 (liveness + no alias spelling; red pre-fix): the registered watch
+    // reports the change once, under the registered spelling; settle polls
+    // bound the pre-fix second (alias-spelled) packet's arrival.
+    auto file = p / "alias_win.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
+    std::vector<FileEvent> events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    for (int i = 0; i < 10; ++i)
+    {
+        auto r = w.poll(std::chrono::milliseconds(50));
+        REQUIRE(r.is_ok());
+        for (auto &e : r.unwrap()) events.push_back(std::move(e));
+    }
+    CHECK(has_event(events, FileEventKind::Created, file));
+    CHECK_EQ(
+        static_cast<int>(std::count_if(
+            events.begin(), events.end(), [&](const FileEvent &e) { return e.path == file; })),
+        1);
+    // Purity (red pre-fix): the cross-poll twin's second event carries the
+    // alias spelling; post-fix it never exists.
+    CHECK_FALSE(
+        std::any_of(
+            events.begin(), events.end(),
+            [&](const FileEvent &e) { return e.path.parent_path() == link; }));
+
+    std::filesystem::remove(link, rec);
+    std::filesystem::remove_all(p, rec);
+}
+
 #endif
 
 #if PJH_PLATFORM_LINUX
@@ -1801,6 +1867,90 @@ TEST_CASE("FileWatcher add skips unreadable subdirectories")
 
     std::error_code rec;
     std::filesystem::remove_all(p, rec);
+}
+
+TEST_CASE("FileWatcher add rejects a symbolic link alias of a watched directory")
+{
+    auto p = make_test_dir();
+    auto link = p.parent_path() / "pjh_platform_watch_alias";
+    std::error_code rec;
+    std::filesystem::remove(link, rec);  // defensive: stale alias from a crashed run
+    std::error_code sec;
+    std::filesystem::create_directory_symlink(p, link, sec);
+    REQUIRE_FALSE(sec);
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    // A2 (discriminator, red pre-fix): the alias resolves to the same
+    // directory as the registered watch, so it must be rejected as
+    // AlreadyWatched. Pre-fix the lexical-only check let it register, and
+    // every change was then reported twice in one batch, once per spelling
+    // (the shared inotify wd routes one kernel record to both entries).
+    auto dup = w.add(link, false);
+    CHECK(dup.is_err());
+    CHECK_EQ(dup.unwrap_err(), ErrorCode::AlreadyWatched);
+
+    // A3 (liveness, green in both worlds): the registered watch still
+    // reports, under the registered spelling.
+    auto file = p / "alias_inside.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    CHECK(has_event(events, FileEventKind::Created, file));
+    // Purity (red pre-fix, same batch): no event may carry the alias spelling.
+    CHECK_FALSE(
+        std::any_of(
+            events.begin(), events.end(),
+            [&](const FileEvent &e) { return e.path.parent_path() == link; }));
+
+    std::filesystem::remove(link, rec);
+    std::filesystem::remove_all(p, rec);
+}
+#endif
+
+#if PJH_PLATFORM_MACOS
+TEST_CASE("FileWatcher add rejects the /tmp alias pair without a symbolic link")
+{
+    // /tmp is a symlink to /private/tmp on the standard image: two
+    // OS-provided spellings of one directory, no user symlink or privilege.
+    std::error_code lec;
+    auto target = std::filesystem::read_symlink("/tmp", lec);
+    if (lec || target != "/private/tmp")
+    {
+        // The alias relation this case constructs does not hold on this
+        // image: documented silent skip (the scenario is unconstructible).
+        return;
+    }
+
+    auto real = std::filesystem::path("/private/tmp") / "pjh_platform_watch_tmp_alias";
+    auto alias = std::filesystem::path("/tmp") / "pjh_platform_watch_tmp_alias";
+    std::error_code rec;
+    std::filesystem::remove_all(real, rec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(real));
+
+    FileWatcher w;
+    REQUIRE(w.add(real, false).is_ok());
+
+    // A2 (discriminator, red pre-fix): the two OS spellings are the same
+    // watch; pre-fix both registered two FSEvents streams and every change
+    // was reported once per lexical root in one poll.
+    auto dup = w.add(alias, false);
+    CHECK(dup.is_err());
+    CHECK_EQ(dup.unwrap_err(), ErrorCode::AlreadyWatched);
+
+    auto file = real / "tmp_alias.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, file); });
+    CHECK(has_event(events, FileEventKind::Created, file));
+    // Purity (red pre-fix): no event may carry the alias spelling.
+    CHECK_FALSE(
+        std::any_of(
+            events.begin(), events.end(),
+            [&](const FileEvent &e) { return e.path.parent_path() == alias; }));
+
+    std::filesystem::remove_all(real, rec);
 }
 #endif
 
