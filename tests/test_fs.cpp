@@ -614,3 +614,33 @@ TEST_CASE("Fs::write_file returns PermissionDenied when the file is read-only")
     std::filesystem::remove(f, sec);
 }
 #endif
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::is_regular_file returns true for a symlink to a regular file")
+{
+    // Reality anchor (task 32; pin discipline per task 27/28): the header
+    // documents follow semantics -- a symlink to a regular file reports
+    // true, a broken symlink reports false without throwing. If a future
+    // change switches to non-follow (symlink_status) semantics, the A3 pin
+    // flips red; that alternative is rejected on record (ROADMAP 32).
+    auto p = Fs::temp_directory() / "pjh_platform_test_symlink_follow";
+    std::error_code sec;
+    std::filesystem::remove_all(p, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(p));  // S1
+    auto file = p / "target.txt";
+    REQUIRE(Fs::write_file(file, "x").is_ok());  // S2
+    auto link = p / "link_to_file";
+    std::filesystem::create_symlink(file, link, sec);
+    REQUIRE_FALSE(sec);  // S3
+    auto broken = p / "broken_link";
+    std::filesystem::create_symlink(p / "missing.txt", broken, sec);
+    REQUIRE_FALSE(sec);  // S4
+
+    CHECK(Fs::is_regular_file(file));     // A1 positive control
+    CHECK(!Fs::is_regular_file(p));       // A2 negative control
+    CHECK(Fs::is_regular_file(link));     // A3 = THE PIN (follow)
+    CHECK(!Fs::is_regular_file(broken));  // A4 broken link: false, no throw
+
+    std::filesystem::remove_all(p, sec);
+}
+#endif

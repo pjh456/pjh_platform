@@ -113,7 +113,9 @@ namespace pjh::platform
         /**
          * @brief Checks whether @p p is a regular file.
          *
-         * @details Returns `false` for directories, symlinks, and special files.
+         * @details Returns `false` for directories, special files, and
+         *          broken symlinks. Symbolic links are followed: a link to a
+         *          regular file returns `true`.
          *
          * @param p Path to test.
          *
