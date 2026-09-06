@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <pjh_platform/env.hpp>
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/os.hpp>
 #include <pjh_platform/platform.hpp>
@@ -11,8 +12,39 @@
 #include <unistd.h>
 #endif
 
+using pjh::platform::Env;
 using pjh::platform::ErrorCode;
 using pjh::platform::Fs;
+
+namespace
+{
+    // Restores one environment variable to its pre-test state (its value if it
+    // was set, absence if it was not) on scope exit, so a REQUIRE failure's
+    // unwind cannot leak a mutated HOME/USERPROFILE into later cases (task 34;
+    // RAII precedent RestorePermissions, test_fs.cpp:561-571).
+    struct EnvRestore
+    {
+        std::string name;
+        bool had;
+        std::string value;
+
+        ~EnvRestore()
+        {
+            if (had)
+                (void)pjh::platform::Env::set(name, value);
+            else
+                (void)pjh::platform::Env::unset(name);
+        }
+    };
+
+    auto capture_env(const char *name) -> EnvRestore
+    {
+        auto cur = pjh::platform::Env::get(name);
+        if (cur.is_ok())
+            return EnvRestore{name, true, cur.unwrap()};
+        return EnvRestore{name, false, {}};
+    }
+}  // namespace
 
 TEST_CASE("Fs::current_path returns non-empty path")
 {
@@ -53,6 +85,7 @@ TEST_CASE("Fs::read_file returns not_found for non-existent file")
 {
     auto content = Fs::read_file("/nonexistent/path/file.txt");
     CHECK(content.is_err());
+    CHECK_EQ(content.unwrap_err(), ErrorCode::NotFound);  // task 34 pin: doc fs.hpp:183-185
 }
 
 TEST_CASE("Fs::copy_file copies file contents")
@@ -463,6 +496,9 @@ TEST_CASE("Fs::extension returns extension with dot")
     CHECK_EQ(Fs::extension(std::filesystem::path("noext")), "");
     CHECK_EQ(Fs::extension(std::filesystem::path("dir/")), "");
     CHECK_EQ(Fs::extension(std::filesystem::path(".hidden")), "");
+    CHECK_EQ(Fs::extension(std::filesystem::path("file.")), ".");  // task 34 pin: doc fs.hpp:443
+    CHECK_EQ(
+        Fs::extension(std::filesystem::path(".bashrc")), "");  // task 34 pin: doc fs.hpp:443-444
 }
 
 TEST_CASE("Fs::stem returns name without extension")
@@ -642,5 +678,214 @@ TEST_CASE("Fs::is_regular_file returns true for a symlink to a regular file")
     CHECK(!Fs::is_regular_file(broken));  // A4 broken link: false, no throw
 
     std::filesystem::remove_all(p, sec);
+}
+#endif
+
+// ── Task 34 pins ─────────────────────────────────────────────────────────
+// Pin the documented Fs long-tail behaviors named by ROADMAP 34 (empty
+// read, copy_directory symlink resolution, remove_all file/link, extension
+// edge names, HOME-unset). Clauses cited per case; symlinks/permission are
+// UNIX-gated (create_symlink / chmod-000 / no-HOME-fallback are POSIX
+// capabilities), each with a task-30-style self-skip or RAII guard.
+
+TEST_CASE("Fs::read_file returns empty string for a zero-byte file")
+{
+    // Contract pin (task 34): fs.hpp:176 -- "Empty files yield Ok("")".
+    // Lane-invariant: POSIX st_size==0 (fs.cpp:210-214) and Windows
+    // fileSize.QuadPart==0 (fs.cpp:163-167) both yield an empty string.
+    auto f = Fs::temp_directory() / "pjh_platform_test_read_empty.txt";
+    std::error_code sec;
+    std::filesystem::remove(f, sec);         // defensive: stale scratch
+    REQUIRE(Fs::write_file(f, "").is_ok());  // S1: zero-byte file
+    auto r = Fs::read_file(f);
+    REQUIRE(r.is_ok());        // A1
+    CHECK_EQ(r.unwrap(), "");  // A2 = THE PIN (empty)
+    std::filesystem::remove(f, sec);
+}
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::read_file returns PermissionDenied when the file is unreadable")
+{
+    // Contract pin (task 34): fs.hpp:183-185 -- "Failure(PermissionDenied) on
+    // access errors". POSIX: open(O_RDONLY) on a 000 file => EACCES
+    // (fs.cpp:198-199). Self-skip + RAII guard per task 30 B.
+    auto f = Fs::temp_directory() / "pjh_platform_test_read_perm.txt";
+    std::error_code sec;
+    std::filesystem::remove(f, sec);               // defensive: stale scratch
+    REQUIRE(Fs::write_file(f, "secret").is_ok());  // S1
+    auto pre = Fs::read_file(f);
+    REQUIRE(pre.is_ok());              // P1 positive control
+    CHECK_EQ(pre.unwrap(), "secret");  // P2
+    auto original = std::filesystem::status(f, sec).permissions();
+    REQUIRE_FALSE(sec);  // S2
+    std::filesystem::permissions(f, std::filesystem::perms::none, sec);
+    REQUIRE_FALSE(sec);  // S3
+    // Self-skip probe: if the 000 file is still readable, EACCES cannot be
+    // manufactured here (privileged process, e.g. root on CI): restore + skip
+    // (task 16/30 precedent, documented silent skip).
+    {
+        int probe = ::open(f.string().c_str(), O_RDONLY);
+        if (probe != -1)
+        {
+            ::close(probe);
+            std::filesystem::permissions(f, original, sec);
+            std::filesystem::remove(f, sec);
+            return;
+        }
+    }
+    {
+        // Restores the mode on every exit path (including a REQUIRE
+        // failure's unwind); a leaked 000 file would break the cleanup.
+        struct RestorePermissions
+        {
+            std::filesystem::path file;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(file, perms, ec);
+            }
+        } guard{f, original};
+        auto r = Fs::read_file(f);
+        CHECK(r.is_err());                                      // A1
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // A2 = THE PIN
+    }
+    std::filesystem::remove(f, sec);
+}
+#endif
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::copy_directory copies symlinks by dereferencing files and stubbing dirs")
+{
+    // Contract pin (task 34): fs.hpp:259-271 (the three-type clause written
+    // by this task's single include/ hunk). A link to a regular file is
+    // dereferenced (dest is a regular file holding the target's bytes); a
+    // link to a directory is not followed (dest is an empty stub, the target
+    // contents are NOT copied through the link); a broken link fails the copy
+    // with the mapped error of resolving the link. Probe-confirmed locally
+    // (task 34 probe, all four symlink cases; plan 4-R2 for the broken code);
+    // the second UNIX lane is verified via CI.
+    auto root = Fs::temp_directory() / "pjh_platform_test_copydir_sym";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S0
+    // Scenario A: a file symlink and a directory symlink (no broken link).
+    auto srcA = root / "srcA";
+    REQUIRE(std::filesystem::create_directories(srcA / "realdir"));                    // S1
+    REQUIRE(Fs::write_file(srcA / "realdir" / "inner.txt", "inner").is_ok());          // S2
+    REQUIRE(Fs::write_file(srcA / "targetfile.txt", "filebytes").is_ok());             // S3
+    std::filesystem::create_symlink(srcA / "targetfile.txt", srcA / "linkfile", sec);  // S4
+    REQUIRE_FALSE(sec);
+    std::filesystem::create_symlink(srcA / "realdir", srcA / "linkdir", sec);  // S5
+    REQUIRE_FALSE(sec);
+    auto dstA = root / "dstA";
+    auto rA = Fs::copy_directory(srcA, dstA);
+    REQUIRE(rA.is_ok());                            // A1 (copy succeeds)
+    CHECK(Fs::is_regular_file(dstA / "linkfile"));  // A2 (file link deref'd)
+    auto rf = Fs::read_file(dstA / "linkfile");
+    REQUIRE(rf.is_ok());                                 // A3
+    CHECK_EQ(rf.unwrap(), "filebytes");                  // A4 = PIN (file link)
+    CHECK(Fs::is_directory(dstA / "linkdir"));           // A5 (stub is a dir)
+    CHECK(!Fs::exists(dstA / "linkdir" / "inner.txt"));  // A6 = PIN (not followed)
+    auto lst = Fs::list_directory(dstA / "linkdir");
+    REQUIRE(lst.is_ok());               // A7a (empty stub)
+    CHECK_EQ(lst.unwrap().size(), 0u);  // A7b
+    // Scenario B: a broken link makes the copy fail.
+    auto srcB = root / "srcB";
+    REQUIRE(std::filesystem::create_directories(srcB));                           // S6
+    std::filesystem::create_symlink(srcB / "missing.txt", srcB / "broken", sec);  // S7
+    REQUIRE_FALSE(sec);
+    auto dstB = root / "dstB";
+    auto rB = Fs::copy_directory(srcB, dstB);
+    CHECK(rB.is_err());                              // B1
+    CHECK_EQ(rB.unwrap_err(), ErrorCode::NotFound);  // B2 = PIN (broken link)
+    std::filesystem::remove_all(root, sec);
+}
+#endif
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::home_directory returns NotFound when HOME is unset (POSIX)")
+{
+    // Contract pin (task 34): fs.hpp:372-373 -- "Failure(NotFound) when
+    // neither variable is set". On POSIX there is no USERPROFILE fallback,
+    // so unsetting HOME alone exercises the NotFound path (fs.cpp:451).
+    auto guard = capture_env("HOME");                    // restore on exit
+    REQUIRE(pjh::platform::Env::unset("HOME").is_ok());  // S1
+    auto r = Fs::home_directory();
+    CHECK(r.is_err());                              // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);  // A2 = THE PIN
+}
+#endif
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE("Fs::home_directory returns NotFound when neither HOME nor USERPROFILE is set (Windows)")
+{
+    // Contract pin (task 34): fs.hpp:372-373 / 379-380 -- "HOME then
+    // USERPROFILE on Windows"; with both unset the fallback chain is
+    // exhausted => Failure(NotFound) (fs.cpp:451). Symmetric pair with the
+    // POSIX arm (task 30/33 gating precedent).
+    auto gh = capture_env("HOME");  // restore on exit
+    auto gu = capture_env("USERPROFILE");
+    REQUIRE(pjh::platform::Env::unset("HOME").is_ok());         // S1
+    REQUIRE(pjh::platform::Env::unset("USERPROFILE").is_ok());  // S2
+    auto r = Fs::home_directory();
+    CHECK(r.is_err());                              // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);  // A2 = THE PIN
+}
+#endif
+
+TEST_CASE("Fs::remove_all removes a single file and reports count 1")
+{
+    // Contract pin (task 34): fs.hpp:68 -- "Recursively removes the file or
+    // directory at @p p" (file half, already documented). Lane-invariant:
+    // std::filesystem::remove_all of a single file removes it and returns 1.
+    auto f = Fs::temp_directory() / "pjh_platform_test_remove_file.txt";
+    std::error_code sec;
+    std::filesystem::remove(f, sec);          // defensive: stale scratch
+    REQUIRE(Fs::write_file(f, "x").is_ok());  // S1
+    auto r = Fs::remove_all(f);
+    CHECK(r.is_ok());          // A1
+    CHECK_EQ(r.unwrap(), 1u);  // A2 = PIN (count = 1 file)
+    CHECK(!Fs::exists(f));     // A3 (gone)
+}
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::remove_all on a symlink removes the link, not the target")
+{
+    // Reality anchor (task 34; pin discipline per task 27): the header is
+    // silent on symlink targets (fs.hpp:68 covers only "file or directory").
+    // The standard says remove_all does not follow symlinks (the symlink is
+    // removed, not its target), and the local probe confirms it for both
+    // link->file (count 1, target survives) and link->dir (count 1, target
+    // survives). Per plan 4-R1 only the lane-invariant invariants are pinned
+    // (is_ok + link gone); the target's fate is reported by the probe, not
+    // pinned, since it is verifiable on the other lanes only via CI.
+    auto root = Fs::temp_directory() / "pjh_platform_test_remove_sym";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S0
+    // (link -> file): remove the link, target survives, count 1.
+    auto target = root / "target.txt";
+    REQUIRE(Fs::write_file(target, "keep").is_ok());  // S1
+    auto lf = root / "link_to_file";
+    std::filesystem::create_symlink(target, lf, sec);  // S2
+    REQUIRE_FALSE(sec);
+    auto r1 = Fs::remove_all(lf);
+    CHECK(r1.is_ok());          // A1
+    CHECK_EQ(r1.unwrap(), 1u);  // A2 = PIN (one link)
+    CHECK(!Fs::exists(lf));     // A3 link gone
+    CHECK(Fs::exists(target));  // A4 = PIN (target survives)
+    // (link -> dir): removes the link (target fate lane-qualified, reported).
+    auto tdir = root / "tdir";
+    REQUIRE(std::filesystem::create_directories(tdir));    // S3
+    REQUIRE(Fs::write_file(tdir / "x.txt", "y").is_ok());  // S4
+    auto ld = root / "link_to_dir";
+    std::filesystem::create_symlink(tdir, ld, sec);  // S5
+    REQUIRE_FALSE(sec);
+    auto r2 = Fs::remove_all(ld);
+    CHECK(r2.is_ok());       // A5 (invariant)
+    CHECK(!Fs::exists(ld));  // A6 (invariant: link gone)
+    std::filesystem::remove_all(root, sec);
 }
 #endif

@@ -258,8 +258,15 @@ namespace pjh::platform
          *
          * @details Creates @p to (including all missing parents) if it does not
          *          already exist, then copies every file and directory under
-         *          @p from into it, preserving the relative layout. Directory
-         *          symlinks are not followed. When @p overwrite is `false` (the
+         *          @p from into it, preserving the relative layout. A symbolic
+         *          link under @p from is copied by its resolved type: a link to a
+         *          regular file is dereferenced, so the entry under @p to is a
+         *          regular file holding the target's contents (not a link); a
+         *          link to a directory is not followed, so the entry under
+         *          @p to is created as an empty directory and the link's target
+         *          contents are not copied through the link; a link whose target
+         *          does not exist makes the copy fail with the mapped error of
+         *          resolving the link. When @p overwrite is `false` (the
          *          default) the operation fails with `AlreadyExists` if any
          *          destination file already exists; when `true` existing
          *          destination files are replaced.
