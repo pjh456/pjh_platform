@@ -13,6 +13,9 @@ namespace pjh::platform::detail
         switch (err)
         {
         case ENOENT:
+        // A symlink loop is unresolvable, not discoverable: map it to
+        // NotFound (task 31 ruling, recorded in .w1mer CHANGES).
+        case ELOOP:
             return ErrorCode::NotFound;
         case EACCES:
         case EPERM:

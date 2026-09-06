@@ -126,7 +126,9 @@ namespace pjh::platform
 #elif PJH_PLATFORM_MACOS
             std::error_code cec;
             entry.canonical_root = std::filesystem::weakly_canonical(entry.watch_root, cec);
-            if (cec || entry.canonical_root.empty())
+            if (cec)
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(cec)};
+            if (entry.canonical_root.empty())
                 return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
 
             auto root_cap = DirectorySnapshot::capture(entry.watch_root);
@@ -287,12 +289,12 @@ namespace pjh::platform
         if (!std::filesystem::exists(absolute, ec))
         {
             if (ec)
-                return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
+                return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         }
         bool is_dir = std::filesystem::is_directory(absolute, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
 
         auto entry = std::make_unique<detail::WatchEntry>();
         entry->path = absolute;

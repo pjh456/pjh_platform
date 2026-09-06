@@ -1907,6 +1907,68 @@ TEST_CASE("FileWatcher add rejects a symbolic link alias of a watched directory"
     std::filesystem::remove(link, rec);
     std::filesystem::remove_all(p, rec);
 }
+
+TEST_CASE("FileWatcher add returns PermissionDenied when the parent directory is unreadable")
+{
+    // The header promises Failure(PermissionDenied) "on access errors"
+    // (add() @return). Pre-fix the query-ec branch hardcoded Unknown, so
+    // the promise was unreachable via the query path on POSIX lanes.
+    auto p = make_test_dir();
+    auto locked = p / "locked";
+    auto victim = locked / "victim";
+    REQUIRE(std::filesystem::create_directories(locked));  // A-1
+    REQUIRE(std::filesystem::create_directories(victim));  // A-2
+
+    FileWatcher w;
+    // Positive control BEFORE the denial: the same path registers fine.
+    REQUIRE(w.add(victim, false).is_ok());  // A-3
+    REQUIRE(w.remove(victim).is_ok());      // A-4
+
+    std::error_code sec;
+    auto original = std::filesystem::status(locked, sec).permissions();
+    REQUIRE_FALSE(sec);  // A-5
+    std::filesystem::permissions(locked, std::filesystem::perms::none, sec);
+    REQUIRE_FALSE(sec);  // A-6
+
+    // Self-skip probe (task 16 precedent): if the 000 directory is still
+    // openable, EACCES cannot be manufactured here (privileged process,
+    // e.g. root on CI): restore and skip (documented silent skip).
+    {
+        std::error_code pec;
+        auto probe = std::filesystem::directory_iterator(locked, pec);
+        if (!pec)
+        {
+            std::error_code rec;
+            std::filesystem::permissions(locked, original, rec);
+            std::filesystem::remove_all(p, rec);
+            return;
+        }
+    }
+
+    {
+        // Restores the mode on every exit path (including a REQUIRE
+        // failure's unwind); a leaked 000 directory would break the next
+        // case's remove_all on the shared sandbox path (task 16 precedent).
+        struct RestorePermissions
+        {
+            std::filesystem::path dir;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(dir, perms, ec);
+            }
+        } guard{locked, original};
+
+        auto r = w.add(victim, false);
+        CHECK(r.is_err());                                      // A-7
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // A-8 (pre-fix red: Unknown)
+    }
+
+    std::error_code rec;
+    std::filesystem::remove_all(p, rec);
+}
 #endif
 
 #if PJH_PLATFORM_MACOS
@@ -2299,4 +2361,47 @@ TEST_CASE("FileWatcher benchmark gated by PJH_WATCH_BENCH_FILES")
 
     std::error_code ec;
     std::filesystem::remove_all(p, ec);
+}
+
+TEST_CASE("FileWatcher add returns NotFound for a symbolic link loop")
+{
+    // Ruling pin: ELOOP is mapped to NotFound by the single mapping table
+    // (task 31 ruling, recorded in .w1mer CHANGES). This asserts the
+    // adjudicated mapping, not a kernel-reality anchor — a loop is
+    // "exists but unresolvable", and NotFound is the chosen boundary code.
+    auto p = make_test_dir();
+    auto a = p / "a";
+    auto b = p / "b";
+    std::error_code rec;
+    std::filesystem::remove(a, rec);  // defensive: stale links from a crashed run
+    std::filesystem::remove(b, rec);
+    std::error_code sec;
+    std::filesystem::create_symlink(b, a, sec);
+    if (!sec)
+        std::filesystem::create_symlink(a, b, sec);
+    if (sec)
+    {
+        // No symbolic-link privilege (SeCreateSymbolicLinkPrivilege /
+        // developer mode) on this runner: the loop is unconstructible,
+        // documented silent skip (task 29 precedent).
+        std::filesystem::remove(a, rec);
+        std::filesystem::remove(b, rec);
+        std::filesystem::remove_all(p, rec);
+        return;
+    }
+
+    FileWatcher w;
+    auto r = w.add(a, false);
+    CHECK(r.is_err());                              // B-1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);  // B-2 (pre-fix red on POSIX: Unknown)
+
+    // Positive control: the parent holds the loop entries but still
+    // registers (the walk visits the loop entries without descending;
+    // capture skips them on sec).
+    CHECK(w.add(p, false).is_ok());  // B-3
+    CHECK(w.remove(p).is_ok());      // B-4
+
+    std::filesystem::remove(a, rec);
+    std::filesystem::remove(b, rec);
+    std::filesystem::remove_all(p, rec);
 }
