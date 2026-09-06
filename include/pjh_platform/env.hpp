@@ -29,7 +29,9 @@ namespace pjh::platform
          * @details Windows: `GetEnvironmentVariableW`. POSIX: `getenv`. The
          *          name is copied to a null-terminated buffer before use, so
          *          passing a `std::string_view` that is not null-terminated is
-         *          safe. Returns `Failure(NotFound)` when the variable is not
+         *          safe. A value cannot contain an embedded NUL byte: the value is
+         *          truncated at the first NUL, because the environment is NUL-terminated.
+         *          Returns `Failure(NotFound)` when the variable is not
          *          set. On Windows the lookup is case-insensitive; on POSIX it
          *          is case-sensitive. The returned value is a snapshot and
          *          remains valid even if the environment changes afterwards.
@@ -53,7 +55,8 @@ namespace pjh::platform
          * @brief Sets the environment variable @p name to @p value.
          *
          * @details Windows: `SetEnvironmentVariableW`. POSIX: `setenv` with
-         *          overwrite enabled, so an existing variable is replaced.
+         *          overwrite enabled, so an existing variable is replaced. An
+         *          empty @p name is rejected, returning `Failure(IoError)`.
          *
          * @param name Variable name.
          * @param value New value.
@@ -76,7 +79,8 @@ namespace pjh::platform
          *
          * @details Windows: `SetEnvironmentVariableW` with a null value.
          *          POSIX: `unsetenv`. Removing a variable that does not exist
-         *          succeeds.
+         *          succeeds. An empty @p name is rejected, returning
+         *          `Failure(IoError)`.
          *
          * @param name Variable to remove.
          *
