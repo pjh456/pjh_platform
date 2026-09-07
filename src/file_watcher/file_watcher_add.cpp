@@ -18,6 +18,26 @@ namespace pjh::platform
 {
     namespace detail
     {
+        // An unresolvable target that is itself a symbolic link (a loop, or
+        // a link whose resolution the OS cannot complete) is discoverable
+        // but not a directory: NotFound, the same boundary semantics as the
+        // ELOOP -> NotFound ruling (task 31, .w1mer CHANGES). POSIX loops
+        // already land NotFound through the mapping table (no-op there); on
+        // Windows the query arm observed an unmapped resolution code
+        // (CI run 34070853078) that lands Unknown. is_symlink uses
+        // symlink_status (does not follow the link), so it is loop-safe on
+        // the loop root itself.
+        auto refine_symlink_unknown(ErrorCode mapped, const std::filesystem::path &target)
+            -> ErrorCode
+        {
+            if (mapped != ErrorCode::Unknown)
+                return mapped;
+            std::error_code sec;
+            if (std::filesystem::is_symlink(target, sec))
+                return ErrorCode::NotFound;
+            return mapped;
+        }
+
 #if PJH_PLATFORM_WINDOWS
         namespace
         {
@@ -289,12 +309,18 @@ namespace pjh::platform
         if (!std::filesystem::exists(absolute, ec))
         {
             if (ec)
-                return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
+            {
+                auto mapped = detail::refine_symlink_unknown(detail::map_error_code(ec), absolute);
+                return pjh::result::Failure<ErrorCode>{mapped};
+            }
             return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
         }
         bool is_dir = std::filesystem::is_directory(absolute, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
+        {
+            auto mapped = detail::refine_symlink_unknown(detail::map_error_code(ec), absolute);
+            return pjh::result::Failure<ErrorCode>{mapped};
+        }
 
         auto entry = std::make_unique<detail::WatchEntry>();
         entry->path = absolute;
