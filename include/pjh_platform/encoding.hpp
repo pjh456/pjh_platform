@@ -80,13 +80,17 @@ namespace pjh::platform
             return {};
 
 #if PJH_PLATFORM_WINDOWS
-        int len =
-            MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+        // MB_ERR_INVALID_CHARS: invalid input fails (returns 0) instead of
+        // being replaced with U+FFFD, so the contract's empty branch is
+        // reachable for it (header @details).
+        int len = MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
         if (len <= 0)
             return {};
         std::wstring result(static_cast<std::size_t>(len), L'\0');
         MultiByteToWideChar(
-            CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), result.data(), len);
+            CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
+            result.data(), len);
         return result;
 #else
         std::wstring result;
@@ -150,14 +154,18 @@ namespace pjh::platform
             return {};
 
 #if PJH_PLATFORM_WINDOWS
+        // WC_ERR_INVALID_CHARS: invalid UTF-16 (lone surrogates) fails
+        // (returns 0) instead of being encoded as replacement text, so the
+        // contract's empty branch is reachable (header @return).
         int len = WideCharToMultiByte(
-            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), nullptr, 0, nullptr, nullptr);
+            CP_UTF8, WC_ERR_INVALID_CHARS, wsv.data(), static_cast<int>(wsv.size()), nullptr, 0,
+            nullptr, nullptr);
         if (len <= 0)
             return {};
         std::string result(static_cast<std::size_t>(len), '\0');
         WideCharToMultiByte(
-            CP_UTF8, 0, wsv.data(), static_cast<int>(wsv.size()), result.data(), len, nullptr,
-            nullptr);
+            CP_UTF8, WC_ERR_INVALID_CHARS, wsv.data(), static_cast<int>(wsv.size()), result.data(),
+            len, nullptr, nullptr);
         return result;
 #else
         std::string result;
