@@ -559,7 +559,12 @@ TEST_CASE("FileWatcher add rejects a directory symbolic link alias (cross-poll t
 
     // A3 (liveness + no alias spelling; red pre-fix): the registered watch
     // reports the change once, under the registered spelling; settle polls
-    // bound the pre-fix second (alias-spelled) packet's arrival.
+    // bound the pre-fix second (alias-spelled) packet's arrival. Ruling
+    // (CI run 34070853078): the Windows watch filter carries SIZE |
+    // LAST_WRITE, so one logical write legitimately yields ADDED +
+    // MODIFIED, two same-spelling OS notifications; the count pin below is
+    // kind-filtered to Created (a twin would be a second Created), and the
+    // alias-spelling purity CHECK that follows remains the anti-twin pin.
     auto file = p / "alias_win.txt";
     REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
     std::vector<FileEvent> events = collect_until(
@@ -573,7 +578,8 @@ TEST_CASE("FileWatcher add rejects a directory symbolic link alias (cross-poll t
     CHECK(has_event(events, FileEventKind::Created, file));
     CHECK_EQ(
         static_cast<int>(std::count_if(
-            events.begin(), events.end(), [&](const FileEvent &e) { return e.path == file; })),
+            events.begin(), events.end(), [&](const FileEvent &e)
+            { return e.path == file && e.kind == FileEventKind::Created; })),
         1);
     // Purity (red pre-fix): the cross-poll twin's second event carries the
     // alias spelling; post-fix it never exists.
