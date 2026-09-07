@@ -626,7 +626,7 @@ TEST_CASE("Fs::write_file returns PermissionDenied when the file is read-only")
     std::error_code sec;
     std::filesystem::remove(f, sec);           // defensive: stale scratch
     CHECK(Fs::write_file(f, "seed").is_ok());  // C1 (positive control)
-    auto original = std::filesystem::permissions(f, sec);
+    auto original = std::filesystem::status(f, sec).permissions();
     REQUIRE_FALSE(sec);
     std::filesystem::permissions(
         f, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace, sec);
