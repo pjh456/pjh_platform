@@ -33,54 +33,64 @@ namespace pjh::platform
             result.data(), len);
         return result;
 #else
+        // Strict UTF-8 validation, mirroring the Windows MB_ERR_INVALID_CHARS
+        // contract: any malformed sequence fails the whole conversion and
+        // yields an empty string instead of being skipped or replaced.
         std::wstring result;
         result.reserve(utf8.size());
-        auto it = utf8.begin();
-        auto end = utf8.end();
-        while (it != end)
+        const auto *p = reinterpret_cast<const unsigned char *>(utf8.data());
+        const auto *end = p + utf8.size();
+        while (p != end)
         {
-            auto c = static_cast<unsigned char>(*it);
-            char32_t cp;
+            const unsigned char lead = *p;
+            char32_t cp = 0;
+            std::size_t len = 0;
 
-            if (c < 0x80)
+            if (lead < 0x80)
             {
-                cp = static_cast<char32_t>(c);
-                ++it;
+                cp = static_cast<char32_t>(lead);
+                len = 1;
             }
-            else if ((c & 0xE0) == 0xC0)
+            else if (lead >= 0xC2 && lead <= 0xDF)
             {
-                if (end - it < 2)
-                    break;
-                cp = static_cast<char32_t>(c & 0x1F) << 6;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F);
-                it += 2;
+                cp = static_cast<char32_t>(lead & 0x1F);
+                len = 2;
             }
-            else if ((c & 0xF0) == 0xE0)
+            else if (lead >= 0xE0 && lead <= 0xEF)
             {
-                if (end - it < 3)
-                    break;
-                cp = static_cast<char32_t>(c & 0x0F) << 12;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F) << 6;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 2)) & 0x3F);
-                it += 3;
+                cp = static_cast<char32_t>(lead & 0x0F);
+                len = 3;
             }
-            else if ((c & 0xF8) == 0xF0)
+            else if (lead >= 0xF0 && lead <= 0xF4)
             {
-                if (end - it < 4)
-                    break;
-                cp = static_cast<char32_t>(c & 0x07) << 18;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 1)) & 0x3F) << 12;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 2)) & 0x3F) << 6;
-                cp |= static_cast<char32_t>(static_cast<unsigned char>(*(it + 3)) & 0x3F);
-                it += 4;
+                cp = static_cast<char32_t>(lead & 0x07);
+                len = 4;
             }
             else
             {
-                ++it;
-                continue;
+                return {};
             }
 
+            if (static_cast<std::size_t>(end - p) < len)
+                return {};
+
+            for (std::size_t k = 1; k < len; ++k)
+            {
+                const unsigned char cont = p[k];
+                if ((cont & 0xC0) != 0x80)
+                    return {};
+                cp = static_cast<char32_t>((cp << 6) | (cont & 0x3F));
+            }
+
+            if ((len == 2 && cp < 0x80) || (len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000))
+                return {};
+            if (cp >= 0xD800 && cp <= 0xDFFF)
+                return {};
+            if (cp > 0x10FFFF)
+                return {};
+
             result.push_back(static_cast<wchar_t>(cp));
+            p += len;
         }
         return result;
 #endif
@@ -108,11 +118,17 @@ namespace pjh::platform
             len, nullptr, nullptr);
         return result;
 #else
+        // Strict range validation, mirroring the Windows WC_ERR_INVALID_CHARS
+        // contract: lone surrogates and code points above U+10FFFF fail the
+        // whole conversion and yield an empty string.
         std::string result;
         result.reserve(wsv.size() * 3);
         for (wchar_t wc : wsv)
         {
             auto cp = static_cast<char32_t>(wc);
+
+            if ((cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF)
+                return {};
 
             if (cp < 0x80)
             {
