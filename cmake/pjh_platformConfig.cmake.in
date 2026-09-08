@@ -1,6 +1,7 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+# Hard dependency: pjh_platformTargets references pjh_result's exported target.
 find_dependency(pjh_result)
 
 include("${CMAKE_CURRENT_LIST_DIR}/pjh_platformTargets.cmake")

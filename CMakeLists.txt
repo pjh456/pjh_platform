@@ -7,9 +7,11 @@ include(FetchContent)
 
 find_package(pjh_result CONFIG QUIET)
 if(NOT TARGET pjh_result)
+    # 固定到已验证的 pjh_result 提交（含 install(EXPORT pjh_resultTargets)）。本库的
+    # install(EXPORT pjh_platformTargets) 依赖 pjh_result 位于某 export set，升级前需重新验证。
     FetchContent_Declare(pjh_result
         GIT_REPOSITORY https://github.com/pjh456/pjh_result.git
-        GIT_TAG main)
+        GIT_TAG 4e2d37f)
     FetchContent_MakeAvailable(pjh_result)
 endif()
 
