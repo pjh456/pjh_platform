@@ -86,13 +86,8 @@ namespace pjh::platform
             std::error_code dir_ec;
             for (auto it = std::filesystem::recursive_directory_iterator(
                      p, std::filesystem::directory_options::skip_permission_denied, dir_ec);
-                 it != std::filesystem::recursive_directory_iterator(); ++it)
+                 it != std::filesystem::recursive_directory_iterator(); it.increment(dir_ec))
             {
-                if (dir_ec)
-                {
-                    dir_ec.clear();
-                    continue;
-                }
                 DWORD attrs = GetFileAttributesW(it->path().c_str());
                 if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY))
                 {
@@ -330,7 +325,7 @@ namespace pjh::platform
         std::filesystem::recursive_directory_iterator it(
             from, std::filesystem::directory_options::skip_permission_denied, ec);
         const std::filesystem::recursive_directory_iterator end;
-        for (; it != end; ++it)
+        for (; it != end; it.increment(ec))
         {
             std::error_code entry_ec;
             const auto &entry = *it;
@@ -422,9 +417,12 @@ namespace pjh::platform
         -> pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>
     {
         std::error_code ec;
+        std::filesystem::directory_iterator it(p, ec);
+        if (ec)
+            return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
+        std::filesystem::directory_iterator end;
         std::vector<std::filesystem::path> entries;
-        for (const auto &entry : std::filesystem::directory_iterator(p, ec))
-            entries.push_back(entry.path());
+        for (; it != end; it.increment(ec)) entries.push_back(it->path());
         if (ec)
             return pjh::result::Failure<ErrorCode>{detail::map_error_code(ec)};
         return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(

@@ -209,13 +209,8 @@ namespace pjh::platform
                 for (auto it = std::filesystem::recursive_directory_iterator(
                          entry.watch_root,
                          std::filesystem::directory_options::skip_permission_denied, ec);
-                     it != std::filesystem::recursive_directory_iterator(); ++it)
+                     it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
                 {
-                    if (ec)
-                    {
-                        ec.clear();
-                        continue;
-                    }
                     std::error_code sec;
                     if (!std::filesystem::is_directory(it->path(), sec))
                         continue;
