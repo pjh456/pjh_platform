@@ -17,6 +17,7 @@ add_library(pjh_platform)
 add_library(pjh::platform ALIAS pjh_platform)
 target_sources(pjh_platform
     PRIVATE
+    src/encoding.cpp
     src/env.cpp
     src/fs.cpp
     src/directory_snapshot.cpp
