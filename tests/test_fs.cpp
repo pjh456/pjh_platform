@@ -343,6 +343,44 @@ TEST_CASE("Fs::rename rejects a directory source onto an existing file")
     std::filesystem::remove(file);
 }
 
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::rename renames a directory symlink over an existing file")
+{
+    // POSIX rename(2) does not follow a trailing symlink on oldpath, so a
+    // symlink to a directory is renamed itself and may replace an existing
+    // non-directory target. A follow-semantics is_directory(from) check would
+    // wrongly reject the pair with InvalidArgument (regression from the
+    // dir->file guard); symlink_status keeps that guard non-following.
+    auto root = Fs::temp_directory() / "pjh_platform_test_rename_dir_symlink";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "target_dir";
+    REQUIRE(std::filesystem::create_directories(target));  // S2
+    auto dest = root / "dest.txt";
+    REQUIRE(Fs::write_file(dest, "target").is_ok());  // S3
+    auto link = root / "link_to_dir";
+    std::filesystem::create_directory_symlink(target, link, sec);  // S4
+    if (sec)
+    {
+        // Environment cannot create directory symlinks (privilege/support):
+        // silent skip per repo convention.
+        std::filesystem::remove_all(root, sec);
+        return;
+    }
+    REQUIRE(std::filesystem::is_symlink(link));  // S5
+
+    auto r = Fs::rename(link, dest, true);
+    REQUIRE(r.is_ok());                        // A1 = THE PIN
+    CHECK(std::filesystem::is_symlink(dest));  // A2: the link itself moved
+    CHECK(Fs::is_directory(dest));             // A3: follows the moved link
+    CHECK(Fs::is_directory(target));           // A4: target survives
+    CHECK(!Fs::exists(link));                  // A5: source link gone
+
+    std::filesystem::remove_all(root, sec);
+}
+#endif
+
 TEST_CASE("Fs::rename returns NotFound for non-existent source")
 {
     auto dst = Fs::temp_directory() / "pjh_platform_test_rename_missing_dst.txt";

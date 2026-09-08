@@ -411,12 +411,14 @@ namespace pjh::platform
                 {
                     // A directory source cannot replace a non-directory target:
                     // POSIX reports ENOTDIR and Windows ERROR_ACCESS_DENIED, so
-                    // reject the pair here to keep both lanes identical.
+                    // reject the pair here to keep both lanes identical. Use
+                    // symlink_status: POSIX rename(2) does not follow a trailing
+                    // symlink on oldpath, so a symlink to a directory is renamed
+                    // itself and must not be treated as a directory source. A
+                    // status-query error is left to the native rename below.
                     std::error_code from_ec;
-                    bool from_is_dir = std::filesystem::is_directory(from, from_ec);
-                    if (from_ec)
-                        return pjh::result::Failure<ErrorCode>{detail::map_error_code(from_ec)};
-                    if (from_is_dir)
+                    const auto from_status = std::filesystem::symlink_status(from, from_ec);
+                    if (!from_ec && std::filesystem::is_directory(from_status))
                         return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
                 }
             }
