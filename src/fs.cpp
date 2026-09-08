@@ -397,7 +397,8 @@ namespace pjh::platform
         else
         {
             std::error_code dir_ec;
-            if (std::filesystem::is_directory(to, dir_ec))
+            const auto to_status = std::filesystem::status(to, dir_ec);
+            if (std::filesystem::is_directory(to_status))
             {
                 // A directory target can only be replaced when it is empty.
                 std::error_code iter_ec;
@@ -411,31 +412,23 @@ namespace pjh::platform
                 if (iter_ec)
                     return pjh::result::Failure<ErrorCode>{detail::map_error_code(iter_ec)};
             }
-            else if (dir_ec)
+            else if (std::filesystem::exists(to_status))
             {
-                return pjh::result::Failure<ErrorCode>{detail::map_error_code(dir_ec)};
+                // A directory source cannot replace a non-directory target:
+                // POSIX reports ENOTDIR and Windows ERROR_ACCESS_DENIED, so
+                // reject the pair here to keep both lanes identical. Use
+                // symlink_status: POSIX rename(2) does not follow a trailing
+                // symlink on oldpath, so a symlink to a directory is renamed
+                // itself and must not be treated as a directory source. A
+                // status-query error is left to the native rename below.
+                std::error_code from_ec;
+                const auto from_status = std::filesystem::symlink_status(from, from_ec);
+                if (!from_ec && std::filesystem::is_directory(from_status))
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
             }
-            else
-            {
-                std::error_code to_ec;
-                bool to_exists = std::filesystem::exists(to, to_ec);
-                if (to_ec)
-                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(to_ec)};
-                if (to_exists)
-                {
-                    // A directory source cannot replace a non-directory target:
-                    // POSIX reports ENOTDIR and Windows ERROR_ACCESS_DENIED, so
-                    // reject the pair here to keep both lanes identical. Use
-                    // symlink_status: POSIX rename(2) does not follow a trailing
-                    // symlink on oldpath, so a symlink to a directory is renamed
-                    // itself and must not be treated as a directory source. A
-                    // status-query error is left to the native rename below.
-                    std::error_code from_ec;
-                    const auto from_status = std::filesystem::symlink_status(from, from_ec);
-                    if (!from_ec && std::filesystem::is_directory(from_status))
-                        return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
-                }
-            }
+            // else: the target does not exist (file_type::not_found) or its
+            // status could not be determined; leave the outcome to the native
+            // rename below, which reports the real error code.
         }
 
 #if PJH_PLATFORM_WINDOWS

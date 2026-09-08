@@ -326,6 +326,45 @@ TEST_CASE("Fs::rename replaces an empty destination directory")
     std::filesystem::remove(dst);
 }
 
+TEST_CASE("Fs::rename with overwrite succeeds when the destination does not exist")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_ow_src.txt";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_ow_dst.txt";
+    std::filesystem::remove(src);
+    std::filesystem::remove(dst);
+    REQUIRE(Fs::write_file(src, "abc").is_ok());
+    REQUIRE(!Fs::exists(dst));
+
+    auto r = Fs::rename(src, dst, true);
+    REQUIRE(r.is_ok());
+    CHECK(!Fs::exists(src));
+    CHECK(Fs::is_regular_file(dst));
+    auto read = Fs::read_file(dst);
+    REQUIRE(read.is_ok());
+    CHECK_EQ(read.unwrap(), "abc");
+
+    std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename a directory with overwrite onto a missing destination")
+{
+    auto src = Fs::temp_directory() / "pjh_platform_test_rename_ow_dir_src";
+    auto dst = Fs::temp_directory() / "pjh_platform_test_rename_ow_dir_dst";
+    std::error_code sec;
+    std::filesystem::remove_all(src, sec);
+    std::filesystem::remove_all(dst, sec);
+    REQUIRE(std::filesystem::create_directories(src));
+    REQUIRE(Fs::write_file(src / "a.txt", "aaa").is_ok());
+    REQUIRE(!Fs::exists(dst));
+
+    auto r = Fs::rename(src, dst, true);
+    REQUIRE(r.is_ok());
+    CHECK(Fs::is_directory(dst));
+    CHECK(!Fs::exists(src));
+
+    std::filesystem::remove_all(dst, sec);
+}
+
 TEST_CASE("Fs::rename rejects a directory source onto an existing file")
 {
     auto dir = Fs::temp_directory() / "pjh_platform_test_rename_dir_over_file";
