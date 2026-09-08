@@ -24,6 +24,28 @@ namespace pjh::platform::detail
             return ErrorCode::AlreadyExists;
         case EINVAL:
             return ErrorCode::InvalidArgument;
+#ifdef ENOTDIR
+        // A path component is not a directory: the POSIX counterpart of the
+        // Windows ERROR_PATH_NOT_FOUND family.
+        case ENOTDIR:
+            return ErrorCode::InvalidArgument;
+#endif
+#ifdef EROFS
+        case EROFS:
+            return ErrorCode::PermissionDenied;
+#endif
+#ifdef ENAMETOOLONG
+        case ENAMETOOLONG:
+            return ErrorCode::InvalidArgument;
+#endif
+#ifdef EMFILE
+        case EMFILE:
+            return ErrorCode::LimitReached;
+#endif
+#ifdef ENFILE
+        case ENFILE:
+            return ErrorCode::LimitReached;
+#endif
 #ifdef ENOTSUP
         case ENOTSUP:
             return ErrorCode::NotSupported;

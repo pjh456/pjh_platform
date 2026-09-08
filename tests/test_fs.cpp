@@ -88,6 +88,18 @@ TEST_CASE("Fs::read_file returns not_found for non-existent file")
     CHECK_EQ(content.unwrap_err(), ErrorCode::NotFound);  // task 34 pin: doc fs.hpp:183-185
 }
 
+TEST_CASE("Fs::read_file returns InvalidArgument for a directory")
+{
+    auto dir = Fs::temp_directory() / "pjh_platform_test_read_file_dir";
+    std::filesystem::create_directories(dir);
+
+    auto r = Fs::read_file(dir);
+    REQUIRE(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Fs::copy_file copies file contents")
 {
     auto src = Fs::temp_directory() / "pjh_platform_test_copy_src.txt";
@@ -312,6 +324,23 @@ TEST_CASE("Fs::rename replaces an empty destination directory")
     CHECK(Fs::is_regular_file(dst));
 
     std::filesystem::remove(dst);
+}
+
+TEST_CASE("Fs::rename rejects a directory source onto an existing file")
+{
+    auto dir = Fs::temp_directory() / "pjh_platform_test_rename_dir_over_file";
+    auto file = Fs::temp_directory() / "pjh_platform_test_rename_file_target.txt";
+    std::filesystem::create_directories(dir);
+    REQUIRE(Fs::write_file(file, "target").is_ok());
+
+    auto r = Fs::rename(dir, file, true);
+    REQUIRE(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);
+    CHECK(Fs::is_regular_file(file));
+    CHECK(Fs::is_directory(dir));
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove(file);
 }
 
 TEST_CASE("Fs::rename returns NotFound for non-existent source")

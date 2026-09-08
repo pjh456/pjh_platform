@@ -144,7 +144,14 @@ namespace pjh::platform
             if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
             if (err == ERROR_ACCESS_DENIED)
+            {
+                // A directory opened for reading reports access denied on
+                // Windows; classify it like the POSIX S_ISDIR branch.
+                DWORD attrs = GetFileAttributesW(p.c_str());
+                if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
                 return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
+            }
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         }
 
@@ -200,6 +207,12 @@ namespace pjh::platform
         {
             ::close(fd);
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+        }
+
+        if (S_ISDIR(st.st_mode))
+        {
+            ::close(fd);
+            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
         }
 
         if (st.st_size == 0)
@@ -387,6 +400,25 @@ namespace pjh::platform
             else if (dir_ec)
             {
                 return pjh::result::Failure<ErrorCode>{detail::map_error_code(dir_ec)};
+            }
+            else
+            {
+                std::error_code to_ec;
+                bool to_exists = std::filesystem::exists(to, to_ec);
+                if (to_ec)
+                    return pjh::result::Failure<ErrorCode>{detail::map_error_code(to_ec)};
+                if (to_exists)
+                {
+                    // A directory source cannot replace a non-directory target:
+                    // POSIX reports ENOTDIR and Windows ERROR_ACCESS_DENIED, so
+                    // reject the pair here to keep both lanes identical.
+                    std::error_code from_ec;
+                    bool from_is_dir = std::filesystem::is_directory(from, from_ec);
+                    if (from_ec)
+                        return pjh::result::Failure<ErrorCode>{detail::map_error_code(from_ec)};
+                    if (from_is_dir)
+                        return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+                }
             }
         }
 

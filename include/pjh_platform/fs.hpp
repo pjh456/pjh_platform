@@ -180,8 +180,9 @@ namespace pjh::platform
          *
          * @param p Path to read.
          *
-         * @return `Ok(contents)` on success; `Failure(NotFound)` if @p p does
-         *         not exist, `Failure(PermissionDenied)` on access errors, or
+         * @return `Ok(contents)` on success; `Failure(InvalidArgument)` if @p p
+         *         is a directory, `Failure(NotFound)` if @p p does not exist,
+         *         `Failure(PermissionDenied)` on access errors, or
          *         `Failure(IoError)` on any other failure.
          *
          * @exception Never throws platform errors; may throw `std::bad_alloc`
@@ -313,7 +314,9 @@ namespace pjh::platform
          *                  failing.
          *
          * @return `Ok()` on success; `Failure(NotFound)` if @p from does not
-         *         exist, `Failure(AlreadyExists)` if @p to exists and @p
+         *         exist, `Failure(InvalidArgument)` if @p from is a directory
+         *         and @p to exists as a non-directory,
+         *         `Failure(AlreadyExists)` if @p to exists and @p
          *         overwrite is `false` (or @p to is a non-empty directory),
          *         `Failure(PermissionDenied)` on access errors, or other mapped
          *         errors otherwise.
