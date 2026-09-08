@@ -23,6 +23,20 @@ target_link_libraries(your_target PRIVATE pjh_platform)
 
 When consumed as a subdirectory, tests and examples are **not** built by default.
 
+## Consuming an installed package
+
+The library also supports `install` / `find_package(pjh_platform)`. The installed
+package config declares `find_dependency(pjh_result)`, so an installed
+`pjh_result` must be discoverable on the consumer side.
+
+```cmake
+find_package(pjh_platform CONFIG REQUIRED)
+target_link_libraries(app PRIVATE pjh_platform)
+```
+
+The installed package exports the plain `pjh_platform` target; the `pjh::platform`
+alias exists only in the source tree (`add_subdirectory`).
+
 ## Quick start
 
 ```cpp
@@ -104,8 +118,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 Tests are built by default; they use [doctest](https://github.com/doctest/doctest),
-vendored as a git submodule — run `git submodule update --init --depth 1` first
-after cloning.
+fetched by CMake at configure time via FetchContent (tag `v2.5.0`,
+`tests/CMakeLists.txt`) — no submodule initialization is needed. When the library
+is consumed as a subproject, tests default OFF and doctest is not fetched.
 
 To also build the sample programs, configure with `-DPJH_PLATFORM_BUILD_EXAMPLES=ON`;
 the `example_env` and `example_fs` executables are then built alongside the library
