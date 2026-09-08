@@ -60,22 +60,26 @@ if(PJH_PLATFORM_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-set(pjh_platform_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/pjh_platform)
+# install / export（仅独立工程时生成；作为子项目被 add_subdirectory 时跳过，
+# 否则导出集缺少外部提供的 pjh_result 目标会导致 configure 失败）
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    set(pjh_platform_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/pjh_platform)
 
-install(TARGETS pjh_platform EXPORT pjh_platformTargets)
-install(EXPORT pjh_platformTargets
-    FILE pjh_platformTargets.cmake
-    DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(TARGETS pjh_platform EXPORT pjh_platformTargets)
+    install(EXPORT pjh_platformTargets
+        FILE pjh_platformTargets.cmake
+        DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-configure_package_config_file(cmake/pjh_platformConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfig.cmake
-    INSTALL_DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion)
-install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfigVersion.cmake
-    DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
+    configure_package_config_file(cmake/pjh_platformConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfig.cmake
+        INSTALL_DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion)
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/pjh_platformConfigVersion.cmake
+        DESTINATION ${pjh_platform_INSTALL_CMAKEDIR})
+endif()
