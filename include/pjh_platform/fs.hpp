@@ -172,11 +172,15 @@ namespace pjh::platform
         /**
          * @brief Reads the entire contents of @p p into a `std::string`.
          *
-         * @details Windows: `CreateFileW` plus a memory-mapped file. POSIX:
-         *          `open` + `fstat` + `mmap`. Empty files yield `Ok("")`. The
-         *          returned string is a copy and remains valid after the mapping
-         *          is released. On Windows the file is opened with
-         *          `FILE_SHARE_READ` so concurrent readers are permitted.
+         * @details Reads the contents with a bounded read loop: on Windows
+         *          `CreateFileW` + `GetFileSizeEx` + `ReadFile`, on POSIX
+         *          `open` + `fstat` + `read`. If the file is truncated
+         *          concurrently after its size is sampled, the prefix already
+         *          read is returned instead of touching memory past the new end
+         *          of file (which would fault). Empty files yield `Ok("")`. The
+         *          returned string is a copy and remains valid after the file is
+         *          closed. On Windows the file is opened with `FILE_SHARE_READ`
+         *          so concurrent readers are permitted.
          *
          * @param p Path to read.
          *
@@ -190,8 +194,8 @@ namespace pjh::platform
          *
          * @sideeffect None; the file is opened read-only.
          *
-         * @platform All supported platforms, with native
-         *           `mmap`/`CreateFileMapping` implementations.
+         * @platform All supported platforms, with native bounded
+         *           `read`/`ReadFile` implementations.
          */
         [[nodiscard]] static auto read_file(const std::filesystem::path &p)
             -> pjh::result::Result<std::string, ErrorCode>;

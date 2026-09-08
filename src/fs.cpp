@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <pjh_platform/env.hpp>
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/fs.hpp>
@@ -168,26 +170,24 @@ namespace pjh::platform
             return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
         }
 
-        HANDLE hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        if (!hMapping)
+        std::string content;
+        content.resize(static_cast<std::size_t>(fileSize.QuadPart));
+        std::size_t total = 0;
+        while (total < content.size())
         {
-            CloseHandle(hFile);
-            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+            DWORD to_read = static_cast<DWORD>(
+                std::min<std::uint64_t>(content.size() - total, 1u << 30));  // cap 1 GiB per call
+            DWORD got = 0;
+            if (!ReadFile(hFile, content.data() + total, to_read, &got, nullptr))
+            {
+                CloseHandle(hFile);
+                return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+            }
+            if (got == 0)
+                break;  // truncated concurrently: keep what we read
+            total += got;
         }
-
-        void *addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-        if (!addr)
-        {
-            CloseHandle(hMapping);
-            CloseHandle(hFile);
-            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
-        }
-
-        std::string content(
-            static_cast<const char *>(addr), static_cast<std::size_t>(fileSize.QuadPart));
-
-        UnmapViewOfFile(addr);
-        CloseHandle(hMapping);
+        content.resize(total);
         CloseHandle(hFile);
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
 
@@ -221,17 +221,24 @@ namespace pjh::platform
             return pjh::result::Result<std::string, ErrorCode>::Ok(std::string());
         }
 
-        void *addr =
-            ::mmap(nullptr, static_cast<std::size_t>(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
-        if (addr == MAP_FAILED)
+        std::string content;
+        content.resize(static_cast<std::size_t>(st.st_size));
+        std::size_t total = 0;
+        while (total < content.size())
         {
-            ::close(fd);
-            return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+            ssize_t n = ::read(fd, content.data() + total, content.size() - total);
+            if (n == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+                ::close(fd);
+                return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+            }
+            if (n == 0)
+                break;  // truncated concurrently: keep what we read
+            total += static_cast<std::size_t>(n);
         }
-
-        std::string content(static_cast<const char *>(addr), static_cast<std::size_t>(st.st_size));
-
-        ::munmap(addr, static_cast<std::size_t>(st.st_size));
+        content.resize(total);
         ::close(fd);
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(content));
 #endif
@@ -288,6 +295,13 @@ namespace pjh::platform
             {
                 ssize_t written = ::write(fd, data, remaining);
                 if (written == -1)
+                {
+                    if (errno == EINTR)
+                        continue;
+                    ::close(fd);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                if (written == 0)
                 {
                     ::close(fd);
                     return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
