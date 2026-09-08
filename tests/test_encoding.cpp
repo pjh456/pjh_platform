@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <pjh_platform/encoding.hpp>
+#include <pjh_platform/platform.hpp>
 
 using enc = pjh::platform::Encoding;
 
@@ -81,7 +82,7 @@ TEST_CASE("Encoding::to_wide / to_utf8 round-trip: mathematical symbols (BMP)")
 
 TEST_CASE("Encoding::to_wide skips invalid lead bytes")
 {
-    // Documented contract (header @details): "skips malformed bytes".
+    // Strict contract: invalid lead bytes yield empty on every platform.
     CHECK(enc::to_wide("\x80").empty());
     CHECK(enc::to_wide("\xFF").empty());
     CHECK(enc::to_wide("\x80\xFF\x81").empty());
@@ -132,8 +133,8 @@ TEST_CASE("Encoding::to_wide rejects a truncated sequence after a valid prefix")
 
 TEST_CASE("Encoding::to_wide yields empty for a truncated sequence with no valid prefix")
 {
-    // Documented contract: truncated sequences stop early; nothing was
-    // decoded before the truncation, so the result is empty on every lane.
+    // Strict contract: truncated sequences are rejected, so the result is
+    // empty on every platform.
     CHECK(enc::to_wide("\xE4\xB8").empty());
     CHECK(enc::to_wide("\xC0").empty());
     CHECK(enc::to_wide("\xF0\x9F").empty());
