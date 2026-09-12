@@ -26,8 +26,10 @@ target_sources(pjh_platform
     src/directory_diff.cpp
     src/directory_status.cpp
     src/error_mapping.cpp
+    src/console/console.cpp
     src/console/console_common.cpp
     src/console/console_query.cpp
+    src/console/console_raw_mode.cpp
     src/console/console_utf8.cpp
     src/file_watcher/file_watcher.cpp
     src/file_watcher/file_watcher_add.cpp

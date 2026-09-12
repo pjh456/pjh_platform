@@ -2,6 +2,7 @@
 #define INCLUDE_PJH_PLATFORM_CONSOLE_HPP
 
 #include <cstddef>
+#include <memory>
 #include <pjh_platform/error.hpp>
 #include <string>
 #include <vector>
@@ -162,6 +163,112 @@ namespace pjh::platform
          *           @p argv.
          */
         [[nodiscard]] static auto utf8_arguments(int argc, char **argv) -> std::vector<std::string>;
+    };
+
+    struct ConsoleModeImpl;  // private, defined in src/console/console_internal.hpp
+
+    /// @brief RAII guard that switches a terminal into raw mode and restores it.
+    ///
+    /// @details Move-only. `make_raw` captures the terminal's current mode and
+    ///          switches it to raw; the destructor restores the captured mode on
+    ///          a best-effort basis and never throws. `suspend`/`resume` toggle
+    ///          between cooked and raw for a human-in-the-loop window and are
+    ///          idempotent (calling either twice, or in either order, is safe).
+    ///          POSIX clears `ICANON | ECHO | ISIG` and sets `VMIN = 1`,
+    ///          `VTIME = 0`; Windows clears `ENABLE_ECHO_INPUT |
+    ///          ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT` on the input
+    ///          handle. No other mode bits are changed, so the captured mode is
+    ///          restored verbatim.
+    ///
+    /// @warning Not thread-safe; the terminal/console mode is process-global and
+    ///          shared by every descriptor of the same terminal. Guards are not
+    ///          reference-counted — each one saves the mode it observes, so
+    ///          nested guards must be destroyed in reverse construction order.
+    /// @warning An abnormal process exit (SIGKILL/crash) or `std::_Exit` bypasses
+    ///          the destructor, leaving the terminal in raw mode; the library
+    ///          installs no signal handler. Use `suspend()` around code that may
+    ///          terminate the process and call it again on the normal path.
+    ///
+    /// @platform Windows, Linux, macOS.
+    class ConsoleMode
+    {
+    public:
+        /// @brief Deleted: the guard owns a live terminal state.
+        ConsoleMode(const ConsoleMode &) = delete;
+        /// @brief Deleted: the guard owns a live terminal state.
+        auto operator=(const ConsoleMode &) -> ConsoleMode & = delete;
+
+        /// @brief Move constructor; transfers ownership of the saved mode.
+        /// @exception Never throws.
+        ConsoleMode(ConsoleMode &&other) noexcept;
+
+        /// @brief Move assignment; releases the current saved mode first, then
+        ///        takes the other's.
+        /// @details The moved-from guard no longer restores anything; its
+        ///          `suspend`/`resume` answer `Failure(InvalidArgument)`.
+        /// @exception Never throws.
+        auto operator=(ConsoleMode &&other) noexcept -> ConsoleMode &;
+
+        /// @brief Restores the captured mode (best effort; never throws).
+        /// @details A no-op when the guard was suspended or moved from.
+        /// @exception Never throws.
+        ~ConsoleMode();
+
+        /**
+         * @brief Captures the mode of @p fd and switches it to raw.
+         *
+         * @details On POSIX @p fd is a file descriptor (`STDIN_FILENO` by
+         *          default); on Windows @p fd is a CRT descriptor translated
+         *          with `_get_osfhandle` (descriptor `0` by default). @p fd must
+         *          refer to an interactive terminal; a redirected or closed
+         *          descriptor yields `Failure(NotATerminal)` and changes nothing.
+         *
+         * @param fd Terminal descriptor; `0` selects standard input.
+         *
+         * @return `Ok(guard)` after raw mode was applied; `Failure(NotATerminal)`
+         *         when @p fd is not a terminal; `Failure(...)` mapped from the
+         *         platform error when `tcgetattr`/`tcsetattr` (POSIX) or
+         *         `GetConsoleMode`/`SetConsoleMode` (Windows) fails.
+         *
+         * @exception Never throws (may allocate).
+         *
+         * @sideeffect Process-global terminal mode of @p fd's terminal.
+         *
+         * @platform Windows, Linux, macOS.
+         */
+        [[nodiscard]] static auto make_raw(int fd = 0)
+            -> pjh::result::Result<ConsoleMode, ErrorCode>;
+
+        /**
+         * @brief Restores cooked mode; idempotent.
+         *
+         * @return `Ok()` when the guard is already suspended or was successfully
+         *         restored; `Failure(InvalidArgument)` on a moved-from guard;
+         *         `Failure(...)` mapped from the platform error when the restore
+         *         call fails. On failure the raw state is left unchanged.
+         *
+         * @exception Never throws.
+         *
+         * @platform Windows, Linux, macOS.
+         */
+        [[nodiscard]] auto suspend() -> pjh::result::Result<void, ErrorCode>;
+
+        /**
+         * @brief Re-applies raw mode; idempotent.
+         *
+         * @return `Ok()` when raw mode is already active or was successfully
+         *         re-applied; `Failure(InvalidArgument)` on a moved-from guard;
+         *         `Failure(...)` mapped from the platform error otherwise.
+         *
+         * @exception Never throws.
+         *
+         * @platform Windows, Linux, macOS.
+         */
+        [[nodiscard]] auto resume() -> pjh::result::Result<void, ErrorCode>;
+
+    private:
+        ConsoleMode() = default;
+        std::unique_ptr<ConsoleModeImpl> impl_;
     };
 
 }  // namespace pjh::platform
