@@ -151,10 +151,15 @@ namespace pjh::platform
          *          watched path (for example, a symbolic link and its target)
          *          is the same watch: the second registration fails with
          *          `Failure(AlreadyWatched)`.
-         *          On Windows, a difference of letter case or an 8.3 short-name
-         *          alias of the same path is not recognized as the same watch:
-         *          two such spellings can both be registered, and each change
-         *          is then reported once per registered spelling.
+         *          On Windows the path identity is compared after
+         *          `weakly_canonical`, which for an existing path resolves it
+         *          to its final normalized form (final case and long name).
+         *          Differently-cased spellings of the same existing directory
+         *          therefore ordinarily resolve to the same identity and the
+         *          second `add` fails with `Failure(AlreadyWatched)` instead of
+         *          registering a second watch. Whether 8.3 short-name aliases
+         *          of an existing path resolve the same way is unverified on
+         *          that platform lane.
          *          On Linux a file is watched directly on its own inode; on
          *          Windows and macOS a file is watched through its parent
          *          directory. Directories are watched directly. For
