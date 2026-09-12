@@ -213,14 +213,26 @@ namespace pjh::platform
                         if (!it->is_directory(sec))
                         {
                             // A genuine non-directory has a clear sec and is
-                            // skipped as before. An entry whose type query
-                            // failed (sec set) could not be classified: its
-                            // subtree may still need a watch, so skipping it
-                            // silently would expose a partial watch set.
-                            // Record it and let the shared rollback below fail
-                            // the registration instead.
-                            if (sec && !walk_sec)
-                                walk_sec = sec;
+                            // skipped as before. When sec is set the follow
+                            // stat failed: libstdc++ re-stats every entry
+                            // whose cached type is symlink (fs_dir.h
+                            // _M_file_type), so a dangling link or a loop
+                            // lands here. Such an entry is discoverable but
+                            // not a directory (refine_symlink_unknown ruling):
+                            // skip it without failing the walk. Only a genuine
+                            // directory candidate whose type query failed is
+                            // recorded and drives the shared all-or-nothing
+                            // rollback below (its subtree may still need a
+                            // watch). is_symlink uses symlink_status, so it
+                            // does not follow the link and is loop-safe.
+                            if (sec)
+                            {
+                                std::error_code lsec;
+                                if (it->is_symlink(lsec))
+                                    continue;
+                                if (!walk_sec)
+                                    walk_sec = sec;
+                            }
                             continue;
                         }
                         int wd = ::inotify_add_watch(impl.fd, it->path().c_str(), watch_mask());

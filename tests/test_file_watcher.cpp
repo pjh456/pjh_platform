@@ -2458,3 +2458,58 @@ TEST_CASE("FileWatcher add returns NotFound for a symbolic link loop")
     std::filesystem::remove(b, rec);
     std::filesystem::remove_all(p, rec);
 }
+
+#if PJH_PLATFORM_LINUX
+TEST_CASE("FileWatcher recursive add skips a dangling symbolic link instead of failing")
+{
+    // F1 regression pin (R_16_1_1_1_1): libstdc++'s directory_entry::
+    // is_directory(ec) re-stats any entry whose cached type is symlink
+    // (fs_dir.h _M_file_type does not short-circuit on file_type::symlink),
+    // so a dangling link sets sec = ENOENT. Recording that into walk_sec
+    // rolled the whole registration back to Failure(NotFound) even though an
+    // unresolvable link is "discoverable but not a directory"
+    // (refine_symlink_unknown ruling) and its subtree needs no watch. The
+    // walk now classifies such entries with the non-following is_symlink and
+    // skips them; only a genuine directory candidate whose type query failed
+    // stays fail-closed. Linux-only: the walk is the inotify arm.
+    auto p = make_test_dir();
+    auto sub = p / "real_sub";
+    auto dangling = p / "dangling_link";
+    REQUIRE(std::filesystem::create_directories(sub));
+    REQUIRE(pjh::platform::Fs::write_file(sub / "child.txt", "x").is_ok());
+
+    std::error_code rec;
+    std::filesystem::remove(dangling, rec);  // defensive: stale link from a crashed run
+    std::error_code sec;
+    std::filesystem::create_symlink(p / "does_not_exist", dangling, sec);
+    if (sec)
+    {
+        // No symbolic-link support on this runner (task 29 silent-skip
+        // precedent): the scenario is unconstructible.
+        std::filesystem::remove_all(p, rec);
+        return;
+    }
+
+    FileWatcher w;
+    // A-1 (discriminator, red pre-fix): the dangling link must not fail the
+    // recursive registration.
+    REQUIRE(w.add(p, true).is_ok());
+
+    // A-2: the dangling link is not a registered watch; re-adding it still
+    // cannot resolve (NotFound), never AlreadyWatched.
+    auto link_add = w.add(dangling, false);
+    CHECK(link_add.is_err());
+    CHECK_EQ(link_add.unwrap_err(), ErrorCode::NotFound);
+
+    // A-3 (liveness): the real subdirectory is watched; a file created
+    // inside it is reported (the per-subdirectory inotify watch is live).
+    auto child = sub / "after.txt";
+    REQUIRE(pjh::platform::Fs::write_file(child, "y").is_ok());
+    auto events = collect_until(
+        w, [&](const auto &all) { return has_event(all, FileEventKind::Created, child); });
+    CHECK(has_event(events, FileEventKind::Created, child));
+
+    std::filesystem::remove(dangling, rec);
+    std::filesystem::remove_all(p, rec);
+}
+#endif
