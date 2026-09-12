@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "doctest_file_time.hpp"
+
 using pjh::platform::DirectorySnapshot;
 using pjh::platform::ErrorCode;
 using pjh::platform::FileHash;

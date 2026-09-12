@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "doctest_file_time.hpp"
+
 using pjh::platform::DirectoryDiff;
 using pjh::platform::DirectorySnapshot;
 using pjh::platform::ErrorCode;
