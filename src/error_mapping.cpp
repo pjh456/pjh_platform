@@ -24,6 +24,13 @@ namespace pjh::platform::detail
             return ErrorCode::AlreadyExists;
         case EINVAL:
             return ErrorCode::InvalidArgument;
+#ifdef EISDIR
+        // A directory where a file was expected: a parameter-shape error, not a
+        // generic I/O failure (the POSIX counterpart of the Fs directory-target
+        // checks). The Windows side has no EISDIR and uses an attribute check.
+        case EISDIR:
+            return ErrorCode::InvalidArgument;
+#endif
 #ifdef ENOTDIR
         // A path component is not a directory: the path is unresolvable, the
         // POSIX counterpart of the Windows ERROR_PATH_NOT_FOUND family, so it

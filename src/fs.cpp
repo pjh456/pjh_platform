@@ -114,6 +114,18 @@ namespace pjh::platform
             return std::filesystem::path(std::u8string(data, data + utf8.size()));
         }
 
+#if PJH_PLATFORM_WINDOWS
+        // A directory opened without FILE_FLAG_BACKUP_SEMANTICS reports
+        // ERROR_ACCESS_DENIED on Windows; distinguish it from a genuine access
+        // denial so a directory target maps to InvalidArgument (same as the
+        // POSIX EISDIR branch and the read_file special-case).
+        auto open_failed_on_directory(const std::filesystem::path &p) -> bool
+        {
+            DWORD attrs = GetFileAttributesW(p.c_str());
+            return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+#endif
+
     }
 
     auto Fs::current_path() -> std::filesystem::path { return std::filesystem::current_path(); }
@@ -199,8 +211,7 @@ namespace pjh::platform
             {
                 // A directory opened for reading reports access denied on
                 // Windows; classify it like the POSIX S_ISDIR branch.
-                DWORD attrs = GetFileAttributesW(p.c_str());
-                if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+                if (open_failed_on_directory(p))
                     return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
                 return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
             }
@@ -306,7 +317,13 @@ namespace pjh::platform
             if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
             if (err == ERROR_ACCESS_DENIED)
+            {
+                // A directory target reports access denied on Windows; classify
+                // it like the POSIX EISDIR branch.
+                if (open_failed_on_directory(p))
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
                 return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
+            }
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         }
 
@@ -350,6 +367,8 @@ namespace pjh::platform
                 return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
             if (errno == EACCES)
                 return pjh::result::Failure<ErrorCode>{ErrorCode::PermissionDenied};
+            if (errno == EISDIR)
+                return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
             return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
         }
 
@@ -402,7 +421,12 @@ namespace pjh::platform
             p.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile == INVALID_HANDLE_VALUE)
-            return pjh::result::Failure<ErrorCode>{detail::map_windows_error(GetLastError())};
+        {
+            DWORD err = GetLastError();
+            if (err == ERROR_ACCESS_DENIED && open_failed_on_directory(p))
+                return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+            return pjh::result::Failure<ErrorCode>{detail::map_windows_error(err)};
+        }
 
         if (!content.empty())
         {

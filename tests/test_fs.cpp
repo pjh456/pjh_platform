@@ -1694,3 +1694,40 @@ TEST_CASE("Fs::home_directory preserves a non-ASCII UTF-8 HOME (Windows)")
     CHECK_EQ(r.unwrap(), expected);
 }
 #endif
+
+// ── Task 51.3 pins: directory targets return InvalidArgument ────────────────
+// A directory can never be replaced or appended to as a file: POSIX open
+// reports EISDIR (mapped by the shared table / the write_file arm), Windows
+// CreateFile reports ERROR_ACCESS_DENIED, and the attribute probe classifies it
+// as a directory. read_file and write_file_atomic already pin this; these two
+// cases close write_file and append.
+
+TEST_CASE("Fs::write_file returns InvalidArgument for a directory target")
+{
+    auto dir = Fs::temp_directory() / "pjh_platform_test_write_file_dir_target";
+    std::error_code sec;
+    std::filesystem::remove_all(dir, sec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(dir));
+
+    auto r = Fs::write_file(dir, "x");
+    CHECK(r.is_err());                                     // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);  // A2 = THE PIN
+    CHECK(Fs::is_directory(dir));                          // A3 (not clobbered)
+
+    std::filesystem::remove_all(dir, sec);
+}
+
+TEST_CASE("Fs::append returns InvalidArgument for a directory target")
+{
+    auto dir = Fs::temp_directory() / "pjh_platform_test_append_dir_target";
+    std::error_code sec;
+    std::filesystem::remove_all(dir, sec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(dir));
+
+    auto r = Fs::append(dir, "x");
+    CHECK(r.is_err());                                     // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);  // A2 = THE PIN
+    CHECK(Fs::is_directory(dir));                          // A3 (not clobbered)
+
+    std::filesystem::remove_all(dir, sec);
+}

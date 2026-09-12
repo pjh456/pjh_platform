@@ -211,7 +211,8 @@ namespace pjh::platform
          * @param p Destination path.
          * @param content Bytes to write.
          *
-         * @return `Ok()` on success; `Failure(NotFound)` if the parent directory
+         * @return `Ok()` on success; `Failure(InvalidArgument)` if @p p is a
+         *         directory, `Failure(NotFound)` if the parent directory
          *         of @p p does not exist, `Failure(PermissionDenied)` on access
          *         errors, or `Failure(IoError)` if the file cannot be opened for
          *         another reason or a write fails.
@@ -257,7 +258,8 @@ namespace pjh::platform
          * @param p Destination path.
          * @param content Bytes to append.
          *
-         * @return `Ok()` on success; `Failure(NotFound)` if the parent directory
+         * @return `Ok()` on success; `Failure(InvalidArgument)` if @p p is a
+         *         directory, `Failure(NotFound)` if the parent directory
          *         of @p p does not exist, `Failure(PermissionDenied)` on access
          *         errors, or the mapped error otherwise (for example
          *         `LimitReached` on a full device, `IoError` on a write
