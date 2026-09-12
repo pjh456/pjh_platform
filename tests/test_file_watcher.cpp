@@ -1673,6 +1673,11 @@ TEST_CASE("FileWatcher overlapping directory and file watch report a rename once
     CHECK_EQ(count(FileEventKind::MovedFrom, file), 1);
     CHECK_EQ(count(FileEventKind::MovedTo, target), 1);
 
+    // Empirical boundary: the strong cookie pin below relies on the parent's
+    // IN_MOVED_FROM being processed before the file's cookie-0 IN_MOVE_SELF
+    // within the same read, so the dedup table keeps the parent-side record.
+    // Every Linux CI run (ubuntu-latest, 6.x kernel) since the fix has held
+    // that order, so the equality assertion stays strong (no downgrade).
     // Cookie pin (winner-invariant): both halves present, cookies equal.
     const FileEvent *from_ev = nullptr;
     const FileEvent *to_ev = nullptr;
