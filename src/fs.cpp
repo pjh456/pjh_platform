@@ -298,13 +298,29 @@ namespace pjh::platform
 
         if (!content.empty())
         {
-            DWORD written;
-            if (!WriteFile(
-                    hFile, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) ||
-                written != content.size())
+            const char *data = content.data();
+            std::size_t remaining = content.size();
+            while (remaining > 0)
             {
-                CloseHandle(hFile);
-                return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                // Cap each call at 1 GiB so a content larger than a DWORD does
+                // not truncate (the defect this loop replaces).
+                DWORD chunk = static_cast<DWORD>(std::min<std::uint64_t>(remaining, 1u << 30));
+                DWORD written = 0;
+                if (!WriteFile(hFile, data, chunk, &written, nullptr))
+                {
+                    CloseHandle(hFile);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                if (written == 0)
+                {
+                    // A successful call that wrote nothing makes no progress;
+                    // fail instead of spinning (GetLastError is not meaningful
+                    // here). Mirrors the POSIX zero-write guard.
+                    CloseHandle(hFile);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                data += written;
+                remaining -= static_cast<std::size_t>(written);
             }
         }
 
