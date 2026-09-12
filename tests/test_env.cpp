@@ -10,7 +10,7 @@ TEST_CASE("Env::get returns not_found for non-existent variable")
 {
     auto val = Env::get("__NONEXISTENT_VAR_12345__");
     CHECK(val.is_err());
-    // task 33 pin: doc env.hpp:32-33 promises Failure(NotFound)
+    // task 33 pin: doc `get` @return promises Failure(NotFound)
     CHECK_EQ(val.unwrap_err(), ErrorCode::NotFound);
 }
 
@@ -35,7 +35,7 @@ TEST_CASE("Env::unset removes variable")
 
     val = Env::get("__TEST_PJH_VAR__");
     CHECK(val.is_err());
-    // task 33 pin: doc env.hpp:32-33 promises Failure(NotFound)
+    // task 33 pin: doc `get` @return promises Failure(NotFound)
     CHECK_EQ(val.unwrap_err(), ErrorCode::NotFound);
 }
 
@@ -78,7 +78,7 @@ TEST_CASE("Env::list returns all environment variables")
 
 TEST_CASE("Env::set with an empty value round-trips as an empty string")
 {
-    // Contract pin (task 33): env.hpp:55-56 — "setenv with overwrite
+    // Contract pin (task 33): `set` @details — "setenv with overwrite
     // enabled, so an existing variable is replaced". Sharp half: an empty
     // value is stored, not conflated with absent — the Windows get query
     // returns len==1 (the terminator) for an empty value, never len==0
@@ -99,7 +99,7 @@ TEST_CASE("Env::set with an empty value round-trips as an empty string")
 
 TEST_CASE("Env::unset succeeds for a non-existent variable")
 {
-    // Contract pin (task 33): env.hpp:78-79 — "Removing a variable that
+    // Contract pin (task 33): `unset` @details — "Removing a variable that
     // does not exist succeeds". POSIX unsetenv returns 0 for a missing
     // name; Windows SetEnvironmentVariableW(name, NULL) is a no-op
     // success for a missing name. If a Windows lane ever reports FALSE
@@ -118,7 +118,7 @@ TEST_CASE("Env::unset succeeds for a non-existent variable")
 #if PJH_PLATFORM_UNIX
 TEST_CASE("Env::get is case-sensitive (POSIX)")
 {
-    // Contract pin (task 33): env.hpp:33-34 — "on POSIX it is
+    // Contract pin (task 33): `get` @details — "on POSIX it is
     // case-sensitive" (getenv matches names byte-exactly).
     constexpr std::string_view k = "__PJH_CASE_A__";
     constexpr std::string_view kAlt = "__pjh_case_a__";
@@ -138,7 +138,7 @@ TEST_CASE("Env::get is case-sensitive (POSIX)")
 #if PJH_PLATFORM_WINDOWS
 TEST_CASE("Env::get is case-insensitive (Windows)")
 {
-    // Contract pin (task 33): env.hpp:33-34 — "On Windows the lookup is
+    // Contract pin (task 33): `get` @details — "On Windows the lookup is
     // case-insensitive" (GetEnvironmentVariableW folds case).
     constexpr std::string_view k = "__PJH_CASE_A__";
     constexpr std::string_view kAlt = "__pjh_case_a__";
@@ -160,7 +160,7 @@ TEST_CASE("Env::set truncates a value at an embedded NUL")
     // boundary is NUL-terminated (setenv / SetEnvironmentVariableW take C
     // strings), so a std::string carrying an interior NUL is truncated at
     // the first NUL on storage. The header self-describes the
-    // null-terminated buffer for the NAME (env.hpp:30-32); the value side
+    // null-terminated buffer for the NAME (`get` @details); the value side
     // is undocumented, hence a reality anchor — it may flip only through
     // a deliberate boundary-changing commit that updates this pin.
     //
@@ -361,29 +361,35 @@ TEST_CASE("Env::snapshot and Env::list surface Windows drive pseudo entries unde
     // GetEnvironmentStringsW block contains drive current-directory
     // pseudo-entries shaped "=C:=C:\...". for_each_env_entry finds '=' at
     // index 0 and stores the remainder under the empty-string key; list()
-    // mirrors it. If a Windows runner reports no such entry, A1 fails: that is
-    // a contract finding (the implementation changed), not a reason to relax
-    // the assertion.
+    // mirrors it. The block can also carry other empty-key hidden entries that
+    // are not drive-shaped (e.g. cmd.exe's "=ExitCode=..."), and the snapshot
+    // map can retain only one of the colliding empty-key entries, so the drive
+    // shape is pinned through list() while the snapshot assertion only checks
+    // that the empty key is surfaced. Shape checks are therefore scoped to the
+    // drive-shaped subset. If a Windows runner reports no drive-shaped empty-key
+    // entry, A1 fails: that is a contract finding (the documented OS /
+    // implementation behavior changed), not a reason to relax this pin.
+    const auto is_drive_shape = [](const std::string &value)
+    {
+        return value.size() >= 3 && value[1] == ':' && value[2] == '=';
+    };
+
     auto snap = Env::snapshot();
     auto entries = Env::list();
 
-    auto it = snap.find(std::string());
-    REQUIRE(it != snap.end());          // A1 = THE PIN (pseudo entry present)
-    REQUIRE_GE(it->second.size(), 3u);  // A2: at least "D:=..."
-    CHECK_EQ(it->second[1], ':');       // A3
-    CHECK_EQ(it->second[2], '=');       // A4
+    REQUIRE(snap.find(std::string()) != snap.end());  // A1: empty key surfaced
 
-    bool list_has_empty = false;
+    bool list_has_drive = false;
     for (const auto &[key, val] : entries)
     {
-        if (key.empty())
+        if (key.empty() && is_drive_shape(val))
         {
-            list_has_empty = true;
-            REQUIRE_GE(val.size(), 3u);  // A5: same shape in list()
-            CHECK_EQ(val[1], ':');
-            CHECK_EQ(val[2], '=');
+            list_has_drive = true;
+            REQUIRE_GE(val.size(), 3u);  // A2: drive shape implies >= 3 bytes
+            CHECK_EQ(val[1], ':');       // A3: documented "X:=" shape
+            CHECK_EQ(val[2], '=');       // A4
         }
     }
-    CHECK(list_has_empty);  // A6 = THE PIN (list mirrors snapshot)
+    CHECK(list_has_drive);  // A5 = THE PIN (drive pseudo entry surfaced)
 }
 #endif
