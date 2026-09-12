@@ -203,6 +203,7 @@ namespace pjh::platform
                 {
                     int first_errno = 0;
                     std::error_code ec;
+                    std::error_code walk_sec;
                     for (auto it = std::filesystem::recursive_directory_iterator(
                              entry.watch_root,
                              std::filesystem::directory_options::skip_permission_denied, ec);
@@ -210,7 +211,18 @@ namespace pjh::platform
                     {
                         std::error_code sec;
                         if (!it->is_directory(sec))
+                        {
+                            // A genuine non-directory has a clear sec and is
+                            // skipped as before. An entry whose type query
+                            // failed (sec set) could not be classified: its
+                            // subtree may still need a watch, so skipping it
+                            // silently would expose a partial watch set.
+                            // Record it and let the shared rollback below fail
+                            // the registration instead.
+                            if (sec && !walk_sec)
+                                walk_sec = sec;
                             continue;
+                        }
                         int wd = ::inotify_add_watch(impl.fd, it->path().c_str(), watch_mask());
                         if (wd == -1)
                         {
@@ -228,19 +240,21 @@ namespace pjh::platform
                         }
                         entry.wd_to_path[wd] = it->path();
                     }
-                    if (first_errno || ec)
+                    if (first_errno || ec || walk_sec)
                     {
-                        // A truncated walk leaves a partial watch set behind
-                        // (the same coverage loss as mid-walk ENOSPC): release
-                        // everything this registration took (root wd included:
-                        // it is in wd_to_path from the root registration
-                        // above). Shared wds survive: release_watch's holder
-                        // scan skips any wd another live entry still holds.
-                        // An inotify failure breaks out before the next
-                        // increment, so the two never coincide and first_errno
-                        // is authoritative when set.
-                        const ErrorCode code =
-                            first_errno ? map_errno_to_error(first_errno) : map_error_code(ec);
+                        // A truncated walk or an unclassifiable entry leaves a
+                        // partial watch set behind (the same coverage loss as
+                        // mid-walk ENOSPC): release everything this
+                        // registration took (root wd included: it is in
+                        // wd_to_path from the root registration above).
+                        // Shared wds survive: release_watch's holder scan
+                        // skips any wd another live entry still holds. An
+                        // inotify failure breaks out before the next increment,
+                        // so first_errno is authoritative when set; otherwise
+                        // map whichever enumeration failure is present.
+                        const ErrorCode code = first_errno ? map_errno_to_error(first_errno)
+                                                           : (walk_sec ? map_error_code(walk_sec)
+                                                                       : map_error_code(ec));
                         for (const auto &[wd, unused] : entry.wd_to_path)
                             release_watch(impl, entry, wd);
                         entry.wd_to_path.clear();
