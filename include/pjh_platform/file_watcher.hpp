@@ -140,11 +140,21 @@ namespace pjh::platform
         /**
          * @brief Starts watching @p path (a file or a directory).
          *
-         * @details The path is normalized to an absolute path first. A path
+         * @details The path is normalized to an absolute path first.
+         *          An empty path, or a path that normalizes to the current
+         *          working directory (such as `.`), refers to the current
+         *          directory, and a root path (such as `/`) to the file system
+         *          root; neither is special-cased, so each registers as an
+         *          ordinary directory, subject to the same duplicate and
+         *          watch-limit outcomes as any other path. A path
          *          that resolves to the same file or directory as an already
          *          watched path (for example, a symbolic link and its target)
          *          is the same watch: the second registration fails with
          *          `Failure(AlreadyWatched)`.
+         *          On Windows, a difference of letter case or an 8.3 short-name
+         *          alias of the same path is not recognized as the same watch:
+         *          two such spellings can both be registered, and each change
+         *          is then reported once per registered spelling.
          *          On Linux a file is watched directly on its own inode; on
          *          Windows and macOS a file is watched through its parent
          *          directory. Directories are watched directly. For
@@ -179,7 +189,7 @@ namespace pjh::platform
          * @param path Path previously passed to `add`.
          *
          * @return `Ok()` on success; `Failure(NotFound)` if @p path is not
-         *         currently being watched.
+         *         currently being watched, or another mapped error.
          *
          * @exception Never throws.
          *
@@ -193,6 +203,12 @@ namespace pjh::platform
          *
          * @details A timeout of zero performs a non-blocking check. Timing out
          *          is not an error: an empty vector is returned.
+         *          On a recursive watch, a subdirectory created after
+         *          registration is watched as it appears; if the platform
+         *          watch limit is reached, a new subdirectory is silently
+         *          left unwatched until slots free up, at which point the next
+         *          event queue overflow re-walks the watched tree and watches
+         *          it.
          *
          * @param timeout Maximum time to wait.
          *
