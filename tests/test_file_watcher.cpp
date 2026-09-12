@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -13,6 +14,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if PJH_PLATFORM_WINDOWS
+#include <process.h>
+#elif PJH_PLATFORM_UNIX
+#include <unistd.h>
+#endif
 
 #if PJH_PLATFORM_LINUX
 #include <fcntl.h>
@@ -31,12 +38,74 @@ using pjh::platform::FileWatcher;
 
 namespace
 {
+    // Process-wide sandbox token: the pid isolates parallel CTest processes
+    // (each discovered test case runs in its own process), the atomic counter
+    // isolates successive calls within one process. Together they make every
+    // make_test_dir() result unique across cases and runs.
+    auto next_sandbox_token() -> std::string
+    {
+        static std::atomic<unsigned long long> counter{0};
+        const auto n = counter.fetch_add(1, std::memory_order_relaxed);
+#if PJH_PLATFORM_WINDOWS
+        const auto pid = static_cast<unsigned long long>(::_getpid());
+#else
+        const auto pid = static_cast<unsigned long long>(::getpid());
+#endif
+        return std::to_string(pid) + "_" + std::to_string(n);
+    }
+
+    // Best-effort, non-throwing cleanup of every sandbox make_test_dir()
+    // created, run at process exit. Under doctest_discover_tests each test
+    // case is its own process, so this is effectively per-case; a direct
+    // whole-suite run collects all of them at the end. Never throws: the
+    // error_code overload is used and failures are ignored.
+    class TempDirRegistry
+    {
+    public:
+        TempDirRegistry() = default;
+        TempDirRegistry(const TempDirRegistry &) = delete;
+        auto operator=(const TempDirRegistry &) -> TempDirRegistry & = delete;
+
+        ~TempDirRegistry()
+        {
+            for (const auto &dir : m_dirs)
+            {
+                std::error_code ec;
+                std::filesystem::remove_all(dir, ec);
+            }
+        }
+
+        void add(const std::filesystem::path &dir) { m_dirs.push_back(dir); }
+
+    private:
+        std::vector<std::filesystem::path> m_dirs;
+    };
+
+    auto temp_dir_registry() -> TempDirRegistry &
+    {
+        static TempDirRegistry registry;
+        return registry;
+    }
+
     auto make_test_dir() -> std::filesystem::path
     {
-        auto p = pjh::platform::Fs::temp_directory() / "pjh_platform_watch_test";
-        std::filesystem::remove_all(p);
-        std::filesystem::create_directories(p);
-        return p;
+        auto base = pjh::platform::Fs::temp_directory();
+        for (;;)
+        {
+            auto p = base / ("pjh_platform_watch_test_" + next_sandbox_token());
+            std::error_code ec;
+            if (std::filesystem::create_directory(p, ec))
+            {
+                temp_dir_registry().add(p);
+                return p;
+            }
+            // ec clear means the name already exists (crashed-run leftover or
+            // pid reuse); retry with the next token. A real creation error
+            // returns the path so the first use fails loudly instead of
+            // looping forever in a broken temp environment.
+            if (ec)
+                return p;
+        }
     }
 
     auto has_event(
@@ -523,7 +592,7 @@ TEST_CASE("FileWatcher reports NotFound when the watched directory is removed")
 TEST_CASE("FileWatcher add rejects a directory symbolic link alias (cross-poll twin)")
 {
     auto p = make_test_dir();
-    auto link = p.parent_path() / "pjh_platform_watch_alias";
+    auto link = p.parent_path() / (p.filename().string() + "_alias");
     std::error_code rec;
     std::filesystem::remove(link, rec);  // defensive
     std::error_code sec;
@@ -1884,7 +1953,7 @@ TEST_CASE("FileWatcher add skips unreadable subdirectories")
 TEST_CASE("FileWatcher add rejects a symbolic link alias of a watched directory")
 {
     auto p = make_test_dir();
-    auto link = p.parent_path() / "pjh_platform_watch_alias";
+    auto link = p.parent_path() / (p.filename().string() + "_alias");
     std::error_code rec;
     std::filesystem::remove(link, rec);  // defensive: stale alias from a crashed run
     std::error_code sec;
@@ -2043,8 +2112,9 @@ TEST_CASE("FileWatcher add rejects the /tmp alias pair without a symbolic link")
         return;
     }
 
-    auto real = std::filesystem::path("/private/tmp") / "pjh_platform_watch_tmp_alias";
-    auto alias = std::filesystem::path("/tmp") / "pjh_platform_watch_tmp_alias";
+    auto real = std::filesystem::path("/private/tmp") /
+                ("pjh_platform_watch_tmp_alias_" + next_sandbox_token());
+    auto alias = std::filesystem::path("/tmp") / real.filename();
     std::error_code rec;
     std::filesystem::remove_all(real, rec);  // defensive: stale scratch
     REQUIRE(std::filesystem::create_directories(real));
