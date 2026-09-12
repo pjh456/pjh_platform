@@ -319,7 +319,8 @@ namespace pjh::platform
          *
          * @return `Ok()` on success; `Failure(NotFound)` if @p from does not
          *         exist, `Failure(InvalidArgument)` if @p from is a directory
-         *         and @p to exists as a non-directory,
+         *         and @p to exists as a non-directory and @p overwrite is
+         *         `true`,
          *         `Failure(AlreadyExists)` if @p to exists and @p
          *         overwrite is `false` (or @p to is a non-empty directory),
          *         `Failure(PermissionDenied)` on access errors, or other mapped

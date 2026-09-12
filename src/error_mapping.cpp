@@ -25,10 +25,11 @@ namespace pjh::platform::detail
         case EINVAL:
             return ErrorCode::InvalidArgument;
 #ifdef ENOTDIR
-        // A path component is not a directory: the POSIX counterpart of the
-        // Windows ERROR_PATH_NOT_FOUND family.
+        // A path component is not a directory: the path is unresolvable, the
+        // POSIX counterpart of the Windows ERROR_PATH_NOT_FOUND family, so it
+        // shares the NotFound family with ENOENT/ELOOP above.
         case ENOTDIR:
-            return ErrorCode::InvalidArgument;
+            return ErrorCode::NotFound;
 #endif
 #ifdef EROFS
         case EROFS:
@@ -56,6 +57,12 @@ namespace pjh::platform::detail
             return ErrorCode::LimitReached;
         case EINTR:
             return ErrorCode::Interrupted;
+        // EBUSY (a mount point or an in-use resource) and ENODEV (device
+        // semantics) have no semantically matching code in the closed
+        // ErrorCode set; they deliberately fall through to the documented
+        // Unknown fallback rather than borrowing an unrelated code. Add a
+        // dedicated enumerator only if a future feature needs the
+        // distinction.
         default:
             return ErrorCode::Unknown;
         }

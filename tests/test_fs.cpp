@@ -68,6 +68,28 @@ TEST_CASE("Fs::create_directories and Fs::exists")
     std::filesystem::remove_all(tmp);
 }
 
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::create_directories returns NotFound when a path component is a file")
+{
+    // Anchor for the shared errno table: a regular file cannot be a parent
+    // directory, so POSIX mkdir reports ENOTDIR; the mapper treats that as an
+    // unresolvable path (NotFound, same family as ENOENT/ELOOP and the Windows
+    // ERROR_PATH_NOT_FOUND family). Windows has no matching generic errno path
+    // here, so the case is POSIX-gated. (task 51.2 F4)
+    auto root = Fs::temp_directory() / "pjh_platform_test_create_dirs_file_component";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));
+    REQUIRE(Fs::write_file(root / "afile", "not a dir").is_ok());
+
+    auto r = Fs::create_directories(root / "afile" / "child");
+    REQUIRE(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);
+
+    std::filesystem::remove_all(root, sec);
+}
+#endif
+
 TEST_CASE("Fs::write_file and Fs::read_file round-trip")
 {
     auto tmp = Fs::temp_directory() / "pjh_platform_test_file.txt";
