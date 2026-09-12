@@ -22,6 +22,7 @@ target_sources(pjh_platform
     src/encoding.cpp
     src/env.cpp
     src/fs.cpp
+    src/paths.cpp
     src/directory_snapshot.cpp
     src/directory_diff.cpp
     src/directory_status.cpp

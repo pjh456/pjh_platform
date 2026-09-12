@@ -12,6 +12,7 @@ set(PJH_PLATFORM_TEST_SOURCES
     test_os.cpp
     test_env.cpp
     test_fs.cpp
+    test_paths.cpp
     test_encoding.cpp
     test_console.cpp
     test_file_watcher.cpp

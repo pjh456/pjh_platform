@@ -1,9 +1,10 @@
 # pjh_platform
 
 C++20 cross-platform compatibility library: uniform, platform-independent
-interfaces for environment variables, filesystem operations, file watching,
-directory snapshots/diffs, OS detection, and string encoding. Every fallible API
-returns `pjh::result::Result<T, ErrorCode>` instead of throwing.
+interfaces for environment variables, filesystem operations, well-known user
+paths, file watching, directory snapshots/diffs, OS detection, and string
+encoding. Every fallible API returns `pjh::result::Result<T, ErrorCode>` instead
+of throwing.
 
 Consumed as a CMake subdirectory. Windows, Linux, and macOS are all tested in
 CI (Linux GCC, Linux Clang, macOS, Windows MSVC).
@@ -122,6 +123,7 @@ int main(int argc, char **argv)
 | `Encoding` | `pjh_platform/encoding.hpp` | UTF-8 ↔ wide-string conversion |
 | `Env` | `pjh_platform/env.hpp` | Environment variable get/set/unset/snapshot/list |
 | `Fs` | `pjh_platform/fs.hpp` | Filesystem operations and lexical path utilities |
+| `Paths` | `pjh_platform/paths.hpp` | Executable path and per-user data/config/cache directories (XDG / %APPDATA% / ~/Library) |
 | `Console` | `pjh_platform/console.hpp` | Console UTF-8 enablement, TTY/size/ANSI probes, wide-argv → UTF-8 |
 | `FileWatcher` | `pjh_platform/file_watcher.hpp` | Poll-based file/directory change monitoring |
 | `DirectorySnapshot` | `pjh_platform/directory_snapshot.hpp` | Point-in-time directory capture with optional content hashing |
@@ -143,8 +145,9 @@ fetched by CMake at configure time via FetchContent (tag `v2.5.0`,
 is consumed as a subproject, tests default OFF and doctest is not fetched.
 
 To also build the sample programs, configure with `-DPJH_PLATFORM_BUILD_EXAMPLES=ON`;
-the `example_env`, `example_fs`, and `example_console` executables are then built
-alongside the library and tests. Full runnable programs: see `examples/`.
+the `example_env`, `example_fs`, `example_console`, and `example_paths`
+executables are then built alongside the library and tests. Full runnable
+programs: see `examples/`.
 
 ## License
 

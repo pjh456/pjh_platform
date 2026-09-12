@@ -6,3 +6,6 @@ target_link_libraries(example_fs PRIVATE pjh_platform)
 
 add_executable(example_console example_console.cpp)
 target_link_libraries(example_console PRIVATE pjh_platform)
+
+add_executable(example_paths example_paths.cpp)
+target_link_libraries(example_paths PRIVATE pjh_platform)

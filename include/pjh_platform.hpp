@@ -3,7 +3,7 @@
 
 /// @file pjh_platform.hpp
 /// @brief Umbrella header exposing the complete pjh_platform API.
-/// @details Includes the `Os`, `Encoding`, `Console`, `Env`, `Fs`,
+/// @details Includes the `Os`, `Encoding`, `Console`, `Env`, `Fs`, `Paths`,
 ///          `FileWatcher`, `DirectorySnapshot`, `DirectoryDiff`,
 ///          `DirectoryStatus`, and `ErrorCode` module headers. The platform
 ///          detection macros (`pjh_platform/platform.hpp`) are deliberately
@@ -21,5 +21,6 @@
 #include "pjh_platform/file_watcher.hpp"
 #include "pjh_platform/fs.hpp"
 #include "pjh_platform/os.hpp"
+#include "pjh_platform/paths.hpp"
 
 #endif  // INCLUDE_PJH_PLATFORM_HPP
