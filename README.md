@@ -178,9 +178,10 @@ int wmain(int argc, wchar_t **argv)
 
 ### `CommandLineToArgvW`, Shell32, and the default libraries
 
-`Console::utf8_arguments` uses `CommandLineToArgvW` and `LocalFree`, both in
-**Shell32**, on Windows. A normal MSVC console build links Shell32 through the
-toolchain's default libraries (CMake's MSVC platform modules put
+`Console::utf8_arguments` uses `CommandLineToArgvW` (**Shell32**) and releases
+the returned buffer with `LocalFree` (**Kernel32**), on Windows. A normal MSVC
+console build links Shell32 through the toolchain's default libraries
+(CMake's MSVC platform modules put
 `shell32.lib` in `CMAKE_*_STANDARD_LIBRARIES`), so no extra CMake line is
 needed. Link `shell32.lib` explicitly if you trim the default libraries
 (`/NODEFAULTLIB`, `-nostdlib`), use a non-CMake MSVC build that does not add
