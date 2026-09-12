@@ -125,6 +125,7 @@ int main(int argc, char **argv)
 | `Fs` | `pjh_platform/fs.hpp` | Filesystem operations and lexical path utilities |
 | `Paths` | `pjh_platform/paths.hpp` | Executable path and per-user data/config/cache directories (XDG / %APPDATA% / ~/Library) |
 | `Console` | `pjh_platform/console.hpp` | Console UTF-8 enablement, TTY/size/ANSI probes, wide-argv → UTF-8 |
+| `Clock` | `pjh_platform/clock.hpp` | Wall-clock and monotonic time; UTC ISO 8601 timestamps (millisecond precision) |
 | `FileWatcher` | `pjh_platform/file_watcher.hpp` | Poll-based file/directory change monitoring |
 | `DirectorySnapshot` | `pjh_platform/directory_snapshot.hpp` | Point-in-time directory capture with optional content hashing |
 | `DirectoryDiff` | `pjh_platform/directory_diff.hpp` | Snapshot comparison: Created/Deleted/Modified and rename detection |

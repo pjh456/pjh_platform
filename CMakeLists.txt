@@ -27,6 +27,7 @@ target_sources(pjh_platform
     src/directory_diff.cpp
     src/directory_status.cpp
     src/error_mapping.cpp
+    src/clock.cpp
     src/console/console.cpp
     src/console/console_common.cpp
     src/console/console_query.cpp

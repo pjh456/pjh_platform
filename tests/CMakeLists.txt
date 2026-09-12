@@ -15,6 +15,7 @@ set(PJH_PLATFORM_TEST_SOURCES
     test_paths.cpp
     test_encoding.cpp
     test_console.cpp
+    test_clock.cpp
     test_file_watcher.cpp
     test_directory_snapshot.cpp
     test_directory_diff.cpp
