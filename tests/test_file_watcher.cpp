@@ -2588,3 +2588,100 @@ TEST_CASE("FileWatcher recursive add skips a dangling symbolic link instead of f
     std::filesystem::remove_all(p, rec);
 }
 #endif
+
+#if PJH_PLATFORM_MACOS
+TEST_CASE("FileWatcher macOS rename-out root final-event probe gated by PJH_PROBE38")
+{
+    // TEMPORARY DIAGNOSTIC PROBE (ROADMAP task 38, bug section; R_24 §6 /
+    // detail/26 §8-3). Dormant by default: it returns immediately unless the
+    // environment variable PJH_PROBE38=1 is set, so the ordinary macOS lane
+    // stays green. When enabled it adjudicates one corner case: after the
+    // watch root is renamed away, does FSEvents deliver a final event for the
+    // root itself, which process_fsevents would turn into a spurious
+    // Deleted(old_root) plus a baseline prune?
+    //
+    // Collect the evidence on the macOS lane with:
+    //   PJH_PROBE38=1 ctest --test-dir build --output-on-failure
+    // The event list is printed with the unique PJH38PROBE prefix and the case
+    // then deliberately fails (CHECK_MESSAGE(false)) so the list surfaces in
+    // the log; the CHECK keeps the cleanup below on the execution path. Watch
+    // is intentionally non-recursive: a non-recursive directory watch always
+    // routes a delivered root event to d == watch_root, reaching the
+    // capture-failure branch without the recursive is_dir gate.
+    //
+    // REMOVAL (zero residue): delete this entire #if PJH_PLATFORM_MACOS block
+    // (from the #if line through its matching #endif). No product code,
+    // include, CMake, or CI file is touched by this probe.
+    //
+    // Guard name: PJH_PROBE38.
+    const char *probe_env = std::getenv("PJH_PROBE38");
+    if (probe_env == nullptr || std::string(probe_env) != "1")
+        return;  // dormant unless explicitly enabled on the macOS lane
+
+    auto p = make_test_dir();
+    auto p2 = p.parent_path() / (p.filename().string() + "_moved");
+    std::error_code ec;
+    std::filesystem::remove_all(p2, ec);  // defensive: rename needs p2 absent
+    REQUIRE(pjh::platform::Fs::write_file(p / "child.txt", "child").is_ok());
+
+    FileWatcher w;
+    REQUIRE(w.add(p, false).is_ok());
+
+    auto poll_into = [&](std::vector<FileEvent> &all, int attempts)
+    {
+        for (int i = 0; i < attempts; ++i)
+        {
+            auto r = w.poll(std::chrono::milliseconds(10));
+            if (r.is_ok())
+            {
+                auto batch = std::move(r).unwrap();
+                for (auto &e : batch) all.push_back(std::move(e));
+            }
+        }
+    };
+
+    // Drain add-time deliveries so the printed list is post-rename only.
+    std::vector<FileEvent> pre;
+    poll_into(pre, 20);
+
+    std::filesystem::rename(p, p2, ec);
+    REQUIRE_FALSE(ec);
+
+    std::vector<FileEvent> all;
+    poll_into(all, 200);  // bounded: 200 x 10 ms = 2 s
+
+    auto kind_name = [](FileEventKind k) -> const char *
+    {
+        switch (k)
+        {
+        case FileEventKind::Created:
+            return "Created";
+        case FileEventKind::Deleted:
+            return "Deleted";
+        case FileEventKind::Modified:
+            return "Modified";
+        case FileEventKind::MovedFrom:
+            return "MovedFrom";
+        case FileEventKind::MovedTo:
+            return "MovedTo";
+        }
+        return "?";
+    };
+    const bool deleted_root = has_event(all, FileEventKind::Deleted, p);
+
+    std::cout << "=== PJH38PROBE BEGIN ===\n";
+    std::cout << "PJH38PROBE root=" << p.string() << " moved_to=" << p2.string()
+              << " event_count=" << all.size() << " deleted_root=" << (deleted_root ? 1 : 0)
+              << "\n";
+    for (const auto &e : all)
+        std::cout << "PJH38PROBE event kind=" << kind_name(e.kind) << " path=" << e.path.string()
+                  << "\n";
+    std::cout << "=== PJH38PROBE END ===\n";
+    std::cout.flush();
+
+    CHECK_MESSAGE(false, "PJH38PROBE temporary diagnostic: remove after adjudication");
+
+    std::filesystem::remove_all(p2, ec);
+    std::filesystem::remove_all(p, ec);
+}
+#endif
