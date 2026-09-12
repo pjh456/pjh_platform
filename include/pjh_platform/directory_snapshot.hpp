@@ -62,12 +62,12 @@ namespace pjh::platform
      *          does not change (such as a rewrite within the file
      *          system's mtime quantum) is not detectable.
      *
-     *          Capture continues past per-entry read failures: an entry
-     *          whose status cannot be determined is omitted, and an entry
-     *          whose size or last-write time cannot be read is recorded
-     *          with that field left at its default value of zero. No
-     *          per-entry failure is reported, so a successful capture may
-     *          be a partial snapshot.
+     *          Per-entry read failures are not reported as errors: an
+     *          entry whose status cannot be determined is omitted, and an
+     *          entry whose size or last-write time cannot be read is
+     *          recorded with that field left at its default value of
+     *          zero. No per-entry failure is surfaced, so a successful
+     *          capture may be a partial snapshot.
      *
      * @platform Windows, Linux, macOS.
      */

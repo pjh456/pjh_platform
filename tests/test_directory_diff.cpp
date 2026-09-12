@@ -634,16 +634,19 @@ TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
 {
     // Contract pin (task 36): the class @details of directory_snapshot.hpp
     // states that the size/mtime fallback is blind to a same-size in-place
-    // content change whose last-write time does not change. The mtime is
-    // restored to the captured value explicitly (the value read back is the
-    // stored value, and setting it again stores the same value on every
-    // supported filesystem), so no clock quantum is relied on. The positive
-    // control (hashed captures of the same tree, same case) proves the
-    // rewrite actually happened and is detected when hashes are present on
-    // both sides, so the negative pin is non-vacuous by construction.
+    // content change whose last-write time does not change. The native
+    // last-write time is captured with last_write_time() and restored
+    // verbatim, so no clock quantum is relied on. It is deliberately not
+    // reconstructed from the nanosecond Entry::m_mtime_ns field: the native
+    // file_clock duration is platform-defined (100 ns ticks on MSVC,
+    // nanoseconds on POSIX), so a duration cast there would be wrong. The
+    // positive control (hashed captures of the same tree, same case) proves
+    // the rewrite actually happened and is detected when hashes are present
+    // on both sides, so the negative pin is non-vacuous by construction.
     auto p = make_test_dir("blindspot");
     auto file = p / "data.txt";
     REQUIRE(pjh::platform::Fs::write_file(file, "aaaa").is_ok());
+    const auto mtime_native = std::filesystem::last_write_time(file);
     auto before = DirectorySnapshot::capture(p);  // no hash
     REQUIRE(before.is_ok());
     auto before_snap = before.unwrap();
@@ -654,9 +657,7 @@ TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
     REQUIRE(before_h.unwrap().get("data.txt")->m_hash.has_value());
     REQUIRE(pjh::platform::Fs::write_file(file, "bbbb").is_ok());  // same size
     std::error_code ec;
-    std::filesystem::last_write_time(
-        file, std::filesystem::file_time_type{std::filesystem::file_time_type::duration{mtime0}},
-        ec);
+    std::filesystem::last_write_time(file, mtime_native, ec);
     REQUIRE_FALSE(ec);
     auto after = DirectorySnapshot::capture(p);
     REQUIRE(after.is_ok());
