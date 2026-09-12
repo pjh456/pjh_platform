@@ -51,6 +51,10 @@ namespace pjh::platform
 
         /// @brief The target is already being watched by a `FileWatcher`.
         AlreadyWatched,
+
+        /// @brief The target stream is not an interactive terminal (for
+        ///        example a size query on redirected output).
+        NotATerminal,
     };
 
 }  // namespace pjh::platform

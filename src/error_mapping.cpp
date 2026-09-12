@@ -51,6 +51,13 @@ namespace pjh::platform::detail
         case ENOTSUP:
             return ErrorCode::NotSupported;
 #endif
+#ifdef ENOTTY
+        // A terminal-only request (e.g. ioctl(TIOCGWINSZ)) on a stream that is
+        // not a terminal: the dedicated NotATerminal code is more precise than
+        // the generic fallback.
+        case ENOTTY:
+            return ErrorCode::NotATerminal;
+#endif
         case EIO:
             return ErrorCode::IoError;
         case ENOSPC:

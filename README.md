@@ -94,6 +94,25 @@ int main()
 be created and polled on the same thread (its run loop). See
 `pjh_platform/file_watcher.hpp` for per-platform notes.
 
+```cpp
+#include <iostream>
+#include <pjh_platform.hpp>
+
+int main(int argc, char **argv)
+{
+    // Windows: switch the process console code page to UTF-8; POSIX: no-op.
+    (void)pjh::platform::Console::enable_utf8();
+
+    if (auto s = pjh::platform::Console::size(); s.is_ok())
+        std::cout << "terminal: " << s.unwrap().columns << 'x' << s.unwrap().rows << '\n';
+
+    // UTF-8 arguments (on Windows decoded from the wide command line).
+    for (const auto &arg : pjh::platform::Console::utf8_arguments(argc, argv))
+        std::cout << arg << '\n';
+    return 0;
+}
+```
+
 ## Features
 
 | Module | Header | Description |
@@ -103,11 +122,12 @@ be created and polled on the same thread (its run loop). See
 | `Encoding` | `pjh_platform/encoding.hpp` | UTF-8 ↔ wide-string conversion |
 | `Env` | `pjh_platform/env.hpp` | Environment variable get/set/unset/snapshot/list |
 | `Fs` | `pjh_platform/fs.hpp` | Filesystem operations and lexical path utilities |
+| `Console` | `pjh_platform/console.hpp` | Console UTF-8 enablement, TTY/size/ANSI probes, wide-argv → UTF-8 |
 | `FileWatcher` | `pjh_platform/file_watcher.hpp` | Poll-based file/directory change monitoring |
 | `DirectorySnapshot` | `pjh_platform/directory_snapshot.hpp` | Point-in-time directory capture with optional content hashing |
 | `DirectoryDiff` | `pjh_platform/directory_diff.hpp` | Snapshot comparison: Created/Deleted/Modified and rename detection |
 | `DirectoryStatus` | `pjh_platform/directory_status.hpp` | Size/extension/largest-file aggregation over a snapshot |
-| `ErrorCode` | `pjh_platform/error.hpp` | The 11-code error vocabulary used by every fallible API |
+| `ErrorCode` | `pjh_platform/error.hpp` | The 12-code error vocabulary used by every fallible API |
 
 ## Building
 
@@ -123,8 +143,8 @@ fetched by CMake at configure time via FetchContent (tag `v2.5.0`,
 is consumed as a subproject, tests default OFF and doctest is not fetched.
 
 To also build the sample programs, configure with `-DPJH_PLATFORM_BUILD_EXAMPLES=ON`;
-the `example_env` and `example_fs` executables are then built alongside the library
-and tests. Full runnable programs: see `examples/`.
+the `example_env`, `example_fs`, and `example_console` executables are then built
+alongside the library and tests. Full runnable programs: see `examples/`.
 
 ## License
 

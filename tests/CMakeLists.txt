@@ -13,6 +13,7 @@ set(PJH_PLATFORM_TEST_SOURCES
     test_env.cpp
     test_fs.cpp
     test_encoding.cpp
+    test_console.cpp
     test_file_watcher.cpp
     test_directory_snapshot.cpp
     test_directory_diff.cpp
