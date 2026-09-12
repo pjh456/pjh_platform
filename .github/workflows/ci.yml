@@ -26,6 +26,12 @@ jobs:
             cxx: clang++
             ccache_variant: ccache
             cmake_args: ""
+          - name: Linux (Clang, ASan+UBSan)
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            ccache_variant: ccache
+            cmake_args: "-DCMAKE_BUILD_TYPE=Debug -DPJH_PLATFORM_SANITIZERS=ON"
           - name: macOS
             os: macos-latest
             cc: clang
@@ -69,4 +75,7 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure

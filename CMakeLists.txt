@@ -60,6 +60,28 @@ else()
 endif()
 option(PJH_PLATFORM_BUILD_TESTS "Build tests" ${PJH_PLATFORM_TESTS_DEFAULT})
 option(PJH_PLATFORM_BUILD_EXAMPLES "Build examples" OFF)
+option(PJH_PLATFORM_SANITIZERS
+    "Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
+
+if(PJH_PLATFORM_SANITIZERS)
+    if(MSVC)
+        message(FATAL_ERROR "PJH_PLATFORM_SANITIZERS requires GCC or Clang")
+    endif()
+    # Instrument the library's own translation units. UBSan must abort rather
+    # than merely report, or the lane cannot act as a gate.
+    target_compile_options(pjh_platform PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+        -fno-sanitize-recover=all)
+    # Propagate to in-tree consumers (tests/examples) through the build
+    # interface only, so the installed export never carries sanitizer flags.
+    target_compile_options(pjh_platform INTERFACE
+        $<BUILD_INTERFACE:-fsanitize=address,undefined>
+        $<BUILD_INTERFACE:-fno-omit-frame-pointer>
+        $<BUILD_INTERFACE:-fno-sanitize-recover=all>)
+    target_link_options(pjh_platform INTERFACE
+        $<BUILD_INTERFACE:-fsanitize=address,undefined>)
+endif()
 
 if(PJH_PLATFORM_BUILD_TESTS)
     enable_testing()
