@@ -1632,3 +1632,65 @@ TEST_CASE(
     std::filesystem::remove_all(root, sec);
 }
 #endif
+
+// ── Task 34.1 pins ───────────────────────────────────────────────────────
+// Fs::home_directory treats a set-but-empty HOME/USERPROFILE as unset
+// (detail/61 §4.5, detail/49 §2.7) and builds the path from the UTF-8 env
+// value without the Windows active-code-page narrow constructor.
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::home_directory returns NotFound when HOME is empty (POSIX)")
+{
+    // Task 34.1 pin: empty HOME == unset; POSIX has no USERPROFILE fallback.
+    auto guard = capture_env("HOME");
+    REQUIRE(Env::set("HOME", "").is_ok());
+    auto r = Fs::home_directory();
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);
+}
+#endif
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE("Fs::home_directory falls back to USERPROFILE when HOME is empty (Windows)")
+{
+    // Task 34.1 pin: an empty HOME must not short-circuit the USERPROFILE
+    // fallback (Env::get returns Ok("") for a set-but-empty variable).
+    auto gh = capture_env("HOME");
+    auto gu = capture_env("USERPROFILE");
+    auto expected = Fs::temp_directory() / "pjh_home_empty_home";
+    auto u8 = expected.u8string();
+    REQUIRE(Env::set("USERPROFILE", std::string(u8.begin(), u8.end())).is_ok());
+    REQUIRE(Env::set("HOME", "").is_ok());
+    auto r = Fs::home_directory();
+    REQUIRE(r.is_ok());
+    CHECK_EQ(r.unwrap(), expected);
+}
+
+TEST_CASE("Fs::home_directory returns NotFound when USERPROFILE is empty (Windows)")
+{
+    // Task 34.1 pin: an empty USERPROFILE is unset, so the chain is exhausted.
+    auto gh = capture_env("HOME");
+    auto gu = capture_env("USERPROFILE");
+    REQUIRE(Env::set("HOME", "").is_ok());
+    REQUIRE(Env::set("USERPROFILE", "").is_ok());
+    auto r = Fs::home_directory();
+    CHECK(r.is_err());
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);
+}
+
+TEST_CASE("Fs::home_directory preserves a non-ASCII UTF-8 HOME (Windows)")
+{
+    // Task 34.1 pin: the UTF-8 env value is decoded through the wide path
+    // constructor, not the active-code-page narrow one; `.u8string()` produces
+    // the UTF-8 bytes and native path equality avoids a second ACP skew.
+    auto guard = capture_env("HOME");
+    // \u escapes keep the source ASCII; .u8string() yields the UTF-8 bytes.
+    auto expected = Fs::temp_directory() /
+                    std::filesystem::path(std::u8string(u8"pjh_home_\u4e2d\u6587_\u00e9"));
+    auto u8 = expected.u8string();
+    REQUIRE(Env::set("HOME", std::string(u8.begin(), u8.end())).is_ok());
+    auto r = Fs::home_directory();
+    REQUIRE(r.is_ok());
+    CHECK_EQ(r.unwrap(), expected);
+}
+#endif

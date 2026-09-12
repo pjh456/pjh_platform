@@ -492,18 +492,20 @@ namespace pjh::platform
         /**
          * @brief Returns the current user's home directory.
          *
-         * @details Reads the `HOME` environment variable; on Windows falls back
-         *          to `USERPROFILE` when `HOME` is not set.
+         * @details Reads the `HOME` environment variable; a `HOME` that is
+         *          unset or set to an empty value is treated as unset, and on
+         *          Windows the `USERPROFILE` fallback is then consulted. The
+         *          value is decoded as UTF-8 on every platform.
          *
          * @return `Ok(home)` on success; `Failure(NotFound)` when neither
-         *         variable is set.
+         *         variable yields a non-empty value.
          *
          * @exception Never throws.
          *
          * @sideeffect None.
          *
          * @platform All supported platforms. `HOME` on POSIX; `HOME` then
-         *           `USERPROFILE` on Windows.
+         *           `USERPROFILE` on Windows. An empty value counts as unset.
          */
         [[nodiscard]] static auto home_directory()
             -> pjh::result::Result<std::filesystem::path, ErrorCode>;

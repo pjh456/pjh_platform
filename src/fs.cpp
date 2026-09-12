@@ -6,6 +6,8 @@
 #include <pjh_platform/error.hpp>
 #include <pjh_platform/fs.hpp>
 #include <pjh_platform/platform.hpp>
+#include <string>
+#include <string_view>
 
 #include "error_mapping.hpp"
 
@@ -98,6 +100,18 @@ namespace pjh::platform
         {
             std::error_code ec;
             std::filesystem::remove(tmp, ec);
+        }
+
+        // UTF-8 (the public string encoding) -> native std::filesystem::path.
+        // std::u8string makes Windows interpret the bytes as UTF-8 and convert
+        // them to UTF-16 instead of using the active code page; on POSIX the
+        // bytes are copied verbatim. Mirrors src/paths.cpp's path_from_utf8.
+        auto path_from_utf8(std::string_view utf8) -> std::filesystem::path
+        {
+            if (utf8.empty())
+                return {};
+            const auto *data = reinterpret_cast<const char8_t *>(utf8.data());
+            return std::filesystem::path(std::u8string(data, data + utf8.size()));
         }
 
     }
@@ -692,15 +706,19 @@ namespace pjh::platform
 
     auto Fs::home_directory() -> pjh::result::Result<std::filesystem::path, ErrorCode>
     {
+        // A variable that is unset or set to an empty value counts as unset, so
+        // the Windows USERPROFILE fallback still applies; values are UTF-8 and
+        // are decoded through path_from_utf8 (never the narrow, active-code-page
+        // path constructor) to preserve non-ASCII home directories (task 34.1).
         auto home = Env::get("HOME");
-        if (home.is_ok())
+        if (home.is_ok() && !home.unwrap().empty())
             return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
-                std::filesystem::path(home.unwrap()));
+                path_from_utf8(home.unwrap()));
 #if PJH_PLATFORM_WINDOWS
         auto userprofile = Env::get("USERPROFILE");
-        if (userprofile.is_ok())
+        if (userprofile.is_ok() && !userprofile.unwrap().empty())
             return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(
-                std::filesystem::path(userprofile.unwrap()));
+                path_from_utf8(userprofile.unwrap()));
 #endif
         return pjh::result::Failure<ErrorCode>{ErrorCode::NotFound};
     }
