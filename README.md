@@ -114,6 +114,90 @@ int main(int argc, char **argv)
 }
 ```
 
+## Windows UTF-8 entry point (arguments and console output)
+
+On Windows the C runtime builds `argv` by decoding the wide (UTF-16) command
+line with the **process ANSI code page**. Non-ASCII arguments such as Chinese
+are therefore already lossy by the time `main` runs (`?` or mojibake). Fixing
+this requires the *entry point*, which belongs to your program: pjh_platform
+is a library and deliberately does not provide or replace `main`, and it
+installs no global code-page hook. It offers two building blocks instead.
+
+### Option 1 — keep `main`, recover UTF-8 with `Console::utf8_arguments`
+
+Recommended and portable: one `main` on every platform. On Windows the
+function ignores `argc`/`argv` and re-parses the wide command line.
+
+```cpp
+#include <iostream>
+#include <pjh_platform/console.hpp>
+
+int main(int argc, char **argv)
+{
+    // Windows: switch the console code page to UTF-8 when stdout is a real
+    // console (a successful no-op for redirected output and on POSIX).
+    (void)pjh::platform::Console::enable_utf8();
+
+    // Windows: UTF-8 arguments recovered from the wide command line;
+    // POSIX: a verbatim copy of argv.
+    for (const auto &arg : pjh::platform::Console::utf8_arguments(argc, argv))
+        std::cout << arg << '\n';
+    return 0;
+}
+```
+
+A complete runnable version is `examples/example_utf8_entry.cpp`.
+
+### Option 2 — use the native wide entry point (`wmain`, MSVC)
+
+If you already use the MSVC wide entry point, convert each wide argument
+directly; no shell library is involved on this route.
+
+```cpp
+#include <iostream>
+#include <pjh_platform/console.hpp>
+#include <pjh_platform/encoding.hpp>
+#include <pjh_platform/platform.hpp>
+
+#if PJH_PLATFORM_WINDOWS
+// MSVC CRT extension. A program has one entry point: do not also define main.
+int wmain(int argc, wchar_t **argv)
+{
+    (void)pjh::platform::Console::enable_utf8();
+    for (int i = 0; i < argc; ++i)
+        std::cout << pjh::platform::Encoding::to_utf8(argv[i]) << '\n';
+    return 0;
+}
+#else
+// POSIX has no wmain; use main + Console::utf8_arguments (Option 1).
+#endif
+```
+
+`wmain` is an MSVC CRT extension, not standard C++; with MinGW it requires
+`-municode`, and it does not exist on Linux or macOS.
+
+### `CommandLineToArgvW`, Shell32, and the default libraries
+
+`Console::utf8_arguments` uses `CommandLineToArgvW` and `LocalFree`, both in
+**Shell32**, on Windows. A normal MSVC console build links Shell32 through the
+toolchain's default libraries (CMake's MSVC platform modules put
+`shell32.lib` in `CMAKE_*_STANDARD_LIBRARIES`), so no extra CMake line is
+needed. Link `shell32.lib` explicitly if you trim the default libraries
+(`/NODEFAULTLIB`, `-nostdlib`), use a non-CMake MSVC build that does not add
+the Win32 default set, or build with MinGW (`-lshell32`). Option 2 (`wmain`)
+has no Shell32 dependency at all.
+
+### Source encoding under MSVC
+
+`enable_utf8` only tells the console to interpret the bytes you write as
+UTF-8; your program must actually write UTF-8. If a source file contains
+non-ASCII narrow literals such as `"中文"`, compile MSVC with `/utf-8` (or save
+the file as UTF-8 with a BOM); otherwise MSVC decodes the source with the
+system code page and mangles the literal. In C++20, `u8"..."` has type
+`const char8_t[]` and is not directly printable, so byte-exact `\x` escapes
+are the portable way to keep a source file ASCII — see
+`examples/example_utf8_entry.cpp`.
+
 ## Features
 
 | Module | Header | Description |
@@ -146,9 +230,9 @@ fetched by CMake at configure time via FetchContent (tag `v2.5.0`,
 is consumed as a subproject, tests default OFF and doctest is not fetched.
 
 To also build the sample programs, configure with `-DPJH_PLATFORM_BUILD_EXAMPLES=ON`;
-the `example_env`, `example_fs`, `example_console`, and `example_paths`
-executables are then built alongside the library and tests. Full runnable
-programs: see `examples/`.
+the `example_env`, `example_fs`, `example_console`, `example_paths`, and
+`example_utf8_entry` executables are then built alongside the library and
+tests. Full runnable programs: see `examples/`.
 
 ## License
 

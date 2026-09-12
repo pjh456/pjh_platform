@@ -9,3 +9,6 @@ target_link_libraries(example_console PRIVATE pjh_platform)
 
 add_executable(example_paths example_paths.cpp)
 target_link_libraries(example_paths PRIVATE pjh_platform)
+
+add_executable(example_utf8_entry example_utf8_entry.cpp)
+target_link_libraries(example_utf8_entry PRIVATE pjh_platform)
