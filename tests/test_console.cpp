@@ -21,6 +21,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #endif
 
 using pjh::platform::Console;
@@ -282,6 +284,33 @@ namespace
     {
         return t.c_lflag & static_cast<tcflag_t>(ICANON | ECHO | ISIG);
     }
+
+    // Bits in c_lflag that the kernel owns as terminal state rather than as
+    // user-settable mode, so a tcsetattr() round-trip cannot reproduce them
+    // bit-for-bit. On macOS/BSD the kernel forces EXTPROC to its current
+    // (read-only) value and ORs PENDIN back in from the previous kernel state
+    // (xnu bsd/kern/tty.c, TIOCSETA handling); restoring ICANON therefore sets
+    // PENDIN even though the captured struct had it clear. Linux defines none
+    // of these, so its exact round-trip pin stays strict.
+    auto kernel_managed_lflag() -> tcflag_t
+    {
+        tcflag_t mask = 0;
+#ifdef PENDIN
+        mask |= static_cast<tcflag_t>(PENDIN);
+#endif
+#ifdef EXTPROC
+        mask |= static_cast<tcflag_t>(EXTPROC);
+#endif
+        return mask;
+    }
+
+    // Hex formatter for doctest INFO diagnostics (no C stdio in tests).
+    auto hex_flags(tcflag_t v) -> std::string
+    {
+        std::ostringstream os;
+        os << "0x" << std::hex << static_cast<unsigned long>(v);
+        return os.str();
+    }
 }  // namespace
 
 TEST_CASE("ConsoleMode raw mode is symmetric and suspend/resume are idempotent")
@@ -295,6 +324,20 @@ TEST_CASE("ConsoleMode raw mode is symmetric and suspend/resume are idempotent")
 
     termios original{};
     REQUIRE(::tcgetattr(pty.slave, &original) == 0);
+
+    // c_lflag carries kernel-managed bits that tcsetattr cannot set, so the
+    // round-trip is compared with those masked out; every bit the library
+    // touches (ICANON/ECHO/ISIG) and every other user-settable bit stays
+    // pinned. The INFO line makes any residual mismatch visible in CI.
+    const tcflag_t ignored = kernel_managed_lflag();
+    auto check_lflag_round_trip = [&](const termios &actual)
+    {
+        INFO(
+            "c_lflag original=", hex_flags(original.c_lflag), " actual=", hex_flags(actual.c_lflag),
+            " xor=", hex_flags(actual.c_lflag ^ original.c_lflag),
+            " ignored_kernel_bits=", hex_flags(ignored));
+        CHECK_EQ(actual.c_lflag & ~ignored, original.c_lflag & ~ignored);
+    };
 
     {
         auto r = ConsoleMode::make_raw(pty.slave);
@@ -314,7 +357,7 @@ TEST_CASE("ConsoleMode raw mode is symmetric and suspend/resume are idempotent")
         CHECK_EQ(after.c_iflag, original.c_iflag);
         CHECK_EQ(after.c_oflag, original.c_oflag);
         CHECK_EQ(after.c_cflag, original.c_cflag);
-        CHECK_EQ(after.c_lflag, original.c_lflag);
+        check_lflag_round_trip(after);
         CHECK_EQ(std::memcmp(after.c_cc, original.c_cc, NCCS), 0);
 
         // Idempotent suspend leaves cooked mode untouched.
@@ -334,7 +377,7 @@ TEST_CASE("ConsoleMode raw mode is symmetric and suspend/resume are idempotent")
     CHECK_EQ(restored.c_iflag, original.c_iflag);
     CHECK_EQ(restored.c_oflag, original.c_oflag);
     CHECK_EQ(restored.c_cflag, original.c_cflag);
-    CHECK_EQ(restored.c_lflag, original.c_lflag);
+    check_lflag_round_trip(restored);
     CHECK_EQ(std::memcmp(restored.c_cc, original.c_cc, NCCS), 0);
 }
 
