@@ -285,15 +285,18 @@ namespace
         return t.c_lflag & static_cast<tcflag_t>(ICANON | ECHO | ISIG);
     }
 
-    // Bits in c_lflag that the kernel owns as terminal state rather than as
-    // user-settable mode, so a tcsetattr() round-trip cannot reproduce them
-    // bit-for-bit. On macOS/BSD the kernel forces EXTPROC to its current
+    // Bits in c_lflag that the BSD/Apple kernel owns as terminal state rather
+    // than as user-settable mode, so a tcsetattr() round-trip cannot reproduce
+    // them bit-for-bit. On macOS/BSD the kernel forces EXTPROC to its current
     // (read-only) value and ORs PENDIN back in from the previous kernel state
     // (xnu bsd/kern/tty.c, TIOCSETA handling); restoring ICANON therefore sets
-    // PENDIN even though the captured struct had it clear. Linux defines none
-    // of these, so its exact round-trip pin stays strict.
+    // PENDIN even though the captured struct had it clear. glibc also defines
+    // the PENDIN/EXTPROC macros (bits/termios-c_lflag.h under __USE_MISC), but
+    // the Linux kernel round-trips both exactly, so the mask is confined to the
+    // BSD/Apple family and Linux keeps its exact bit-for-bit round-trip pin.
     auto kernel_managed_lflag() -> tcflag_t
     {
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
         tcflag_t mask = 0;
 #ifdef PENDIN
         mask |= static_cast<tcflag_t>(PENDIN);
@@ -302,6 +305,9 @@ namespace
         mask |= static_cast<tcflag_t>(EXTPROC);
 #endif
         return mask;
+#else
+        return 0;
+#endif
     }
 
     // Hex formatter for doctest INFO diagnostics (no C stdio in tests).
