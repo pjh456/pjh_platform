@@ -199,12 +199,14 @@ namespace pjh::platform
                 }
             }
 
-            auto tree_dirs(WatchEntry &entry) -> std::vector<std::filesystem::path>
+            auto tree_dirs(WatchEntry &entry)
+                -> pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>
             {
                 std::vector<std::filesystem::path> dirs;
                 dirs.push_back(entry.watch_root);
                 if (!entry.recursive)
-                    return dirs;
+                    return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(
+                        std::move(dirs));
                 std::error_code ec;
                 for (auto it = std::filesystem::recursive_directory_iterator(
                          entry.watch_root,
@@ -216,7 +218,12 @@ namespace pjh::platform
                         continue;
                     dirs.push_back(it->path());
                 }
-                return dirs;
+                // A construction or increment failure leaves the listing
+                // truncated; it must not be used to reconcile the watch set.
+                if (ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
+                return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(
+                    std::move(dirs));
             }
 
             auto resync_directory(
@@ -356,7 +363,17 @@ namespace pjh::platform
                 // delivered directly (bounded to the window since the last
                 // baseline). The net change is still reported; nothing is
                 // silently lost.
-                auto current_dirs = tree_dirs(entry);
+                //
+                // If the directory listing was truncated, keep the current
+                // watch set and baselines untouched (fail-safe): releasing
+                // live child watches or erasing baselines on a partial listing
+                // would lose coverage permanently. The retained baseline
+                // lets the next successful resync re-diff and report the
+                // overflow-window changes late.
+                auto tree = tree_dirs(entry);
+                if (tree.is_err())
+                    return;
+                auto current_dirs = std::move(tree).unwrap();
 
                 // Reconcile the inotify watch set with the live directory tree:
                 // drop watches for directories that are gone, add watches for
@@ -434,7 +451,14 @@ namespace pjh::platform
                 // below; between seed and last use, out is mutated only by
                 // emit_if_new (no direct push runs inside this resync).
                 EmitIndex emit_seen = seed_emit_index(out);
-                auto current_dirs = tree_dirs(entry);
+                // A truncated listing must not drive the baseline prune below:
+                // keep every baseline so the next successful resync can still
+                // diff the overflow window (fail-safe, no handle teardown
+                // happens on this platform either).
+                auto tree = tree_dirs(entry);
+                if (tree.is_err())
+                    return;
+                auto current_dirs = std::move(tree).unwrap();
                 for (const auto &dir : current_dirs) resync_directory(entry, dir, out, emit_seen);
                 for (auto sit = entry.snapshots.begin(); sit != entry.snapshots.end();)
                 {

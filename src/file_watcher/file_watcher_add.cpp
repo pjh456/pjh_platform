@@ -80,6 +80,11 @@ namespace pjh::platform
                     if (cap.is_ok())
                         entry.snapshots[it->path()] = std::move(cap).unwrap();
                 }
+                // A truncated walk would leave a partial baseline model; fail
+                // the registration instead of reporting Ok for it. No kernel
+                // resource is registered yet, so no rollback is needed.
+                if (ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
                 return pjh::result::Result<void, ErrorCode>::Ok();
             }
         }
@@ -166,6 +171,11 @@ namespace pjh::platform
                     if (cap.is_ok())
                         entry.snapshots[it->path()] = std::move(cap).unwrap();
                 }
+                // A truncated walk would leave a partial baseline model; fail
+                // the registration before the stream is created instead of
+                // reporting Ok for it.
+                if (ec)
+                    return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
             }
 
             create_fsevents_stream(impl, entry);
@@ -218,18 +228,24 @@ namespace pjh::platform
                         }
                         entry.wd_to_path[wd] = it->path();
                     }
-                    if (first_errno)
+                    if (first_errno || ec)
                     {
-                        // Release everything this registration took
-                        // (root wd included: it is in wd_to_path from the
-                        // root registration above). Shared wds survive:
-                        // release_watch's holder scan skips any wd another
-                        // live entry still holds.
+                        // A truncated walk leaves a partial watch set behind
+                        // (the same coverage loss as mid-walk ENOSPC): release
+                        // everything this registration took (root wd included:
+                        // it is in wd_to_path from the root registration
+                        // above). Shared wds survive: release_watch's holder
+                        // scan skips any wd another live entry still holds.
+                        // An inotify failure breaks out before the next
+                        // increment, so the two never coincide and first_errno
+                        // is authoritative when set.
+                        const ErrorCode code =
+                            first_errno ? map_errno_to_error(first_errno) : map_error_code(ec);
                         for (const auto &[wd, unused] : entry.wd_to_path)
                             release_watch(impl, entry, wd);
                         entry.wd_to_path.clear();
                         entry.root_wd = -1;  // hygiene; the entry is destroyed by the caller
-                        return pjh::result::Failure<ErrorCode>{map_errno_to_error(first_errno)};
+                        return pjh::result::Failure<ErrorCode>{code};
                     }
                 }
             }
