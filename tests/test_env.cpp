@@ -189,3 +189,201 @@ TEST_CASE("Env::set truncates a value at an embedded NUL")
     CHECK_EQ(n.unwrap(), "anchor");  // A5: NUL-terminated name lookup
     (void)Env::unset(kn);
 }
+
+// ── Task 56 pins ─────────────────────────────────────────────────────────
+// Freeze the Env single-source-of-truth contract (detail/48 §2.1, detail/51
+// §3, detail/52 D8): empty-key rejection, set-but-empty vs missing, snapshot
+// isolation with a live `get`, CJK (UTF-8) round-trip, and case-sensitivity of
+// map lookups. Pure process-environment logic: no files, no timing. Scratch
+// keys are defensively unset before and after; CJK is written as explicit
+// UTF-8 byte escapes (test_encoding.cpp precedent) so the source is not
+// dependent on the host compiler's charset.
+
+TEST_CASE("Env::set and Env::unset reject an empty key and Env::get reports it missing")
+{
+    // Contract pin (task 56): env.hpp set/unset @details — an empty name is
+    // rejected with Failure(IoError) and leaves the environment unchanged;
+    // get @details — an empty name is never a valid variable => NotFound.
+    // POSIX: setenv("")/unsetenv("") = -1/EINVAL, getenv("") = NULL.
+    // Windows: SetEnvironmentVariableW(L"", ...) = FALSE,
+    // GetEnvironmentVariableW(L"", ...) = 0.
+    constexpr std::string_view kEmpty = "";
+    auto s = Env::set(kEmpty, "v");
+    REQUIRE(s.is_err());                           // A1
+    CHECK_EQ(s.unwrap_err(), ErrorCode::IoError);  // A2 = THE PIN (empty key)
+    auto u = Env::unset(kEmpty);
+    REQUIRE(u.is_err());                           // A3
+    CHECK_EQ(u.unwrap_err(), ErrorCode::IoError);  // A4 = THE PIN (empty key)
+    auto g = Env::get(kEmpty);
+    REQUIRE(g.is_err());                            // A5
+    CHECK_EQ(g.unwrap_err(), ErrorCode::NotFound);  // A6 = THE PIN (empty name)
+}
+
+TEST_CASE("Env::get distinguishes a set-but-empty value from a missing variable")
+{
+    // Contract pin (task 56): env.hpp get/set @details — a set-but-empty
+    // variable is present and returns Ok(""); a missing variable returns
+    // Failure(NotFound). This is the pjh_cli single-source contract: is_ok()
+    // must not be read as "non-empty", and snapshot() carries the key with an
+    // empty value.
+    constexpr std::string_view k = "__PJH_EMPTY_VS_MISSING__";
+    constexpr std::string_view kAbsent = "__PJH_EMPTY_VS_MISSING_ABSENT__";
+    (void)Env::unset(k);
+    (void)Env::unset(kAbsent);
+    REQUIRE(Env::set(k, "").is_ok());  // S1
+
+    auto present = Env::get(k);
+    REQUIRE(present.is_ok());        // A1 = THE PIN (present, not NotFound)
+    CHECK_EQ(present.unwrap(), "");  // A2 = THE PIN (empty value round-trip)
+
+    auto missing = Env::get(kAbsent);
+    REQUIRE(missing.is_err());                            // A3
+    CHECK_EQ(missing.unwrap_err(), ErrorCode::NotFound);  // A4 = THE PIN
+
+    auto snap = Env::snapshot();
+    auto it = snap.find(std::string(k));
+    REQUIRE(it != snap.end());                       // A5: key present
+    CHECK_EQ(it->second, "");                        // A6: empty value
+    CHECK_EQ(snap.count(std::string(kAbsent)), 0u);  // A7: absent
+    (void)Env::unset(k);
+}
+
+TEST_CASE("Env::snapshot and Env::list are isolated while Env::get reads the live environment")
+{
+    // Contract pin (task 56): env.hpp snapshot/list @details — independent
+    // point-in-time copies; get @details — re-reads the live environment on
+    // every call (get is NOT a snapshot; detail/51 R6).
+    constexpr std::string_view k = "__PJH_SNAP_ISO__";
+    (void)Env::unset(k);
+    REQUIRE(Env::set(k, "before").is_ok());  // S1
+
+    auto snap = Env::snapshot();  // capture point
+    auto entries = Env::list();
+    auto snap_it = snap.find(std::string(k));
+    REQUIRE(snap_it != snap.end());       // S2
+    CHECK_EQ(snap_it->second, "before");  // S3
+
+    REQUIRE(Env::set(k, "after").is_ok());  // S4: mutate after capture
+
+    auto live = Env::get(k);
+    REQUIRE(live.is_ok());                // A1 = THE PIN (get is live)
+    CHECK_EQ(live.unwrap(), "after");     // A2 = THE PIN
+    CHECK_EQ(snap_it->second, "before");  // A3 = THE PIN (snapshot frozen)
+
+    bool list_frozen = false;
+    for (const auto &[key, val] : entries)
+    {
+        if (key == k)
+            list_frozen = (val == "before");
+    }
+    CHECK(list_frozen);  // A4 = THE PIN (list frozen)
+
+    REQUIRE(Env::unset(k).is_ok());       // S5: remove
+    CHECK_EQ(snap_it->second, "before");  // A5: snapshot still holds it
+    auto gone = Env::get(k);
+    REQUIRE(gone.is_err());                            // A6: live read missing
+    CHECK_EQ(gone.unwrap_err(), ErrorCode::NotFound);  // A7
+}
+
+TEST_CASE("Env::set and Env::get round-trip a CJK (UTF-8) name and value")
+{
+    // Contract pin (task 56): env.hpp class @details — UTF-8 is the canonical
+    // boundary encoding (Windows converts through Encoding, POSIX passes bytes
+    // through). Lane-invariant: the exact UTF-8 byte sequence round-trips.
+    // Source bytes: 变量 / 值_値_中文_€, written as escapes for host-independence.
+    const std::string k = "__PJH_CJK_\xE5\x8F\x98\xE9\x87\x8F__";
+    const std::string v = "\xE5\x80\xBC_\xE5\x80\xA4_\xE4\xB8\xAD\xE6\x96\x87_\xE2\x82\xAC";
+    (void)Env::unset(k);
+    auto s = Env::set(k, v);
+    REQUIRE(s.is_ok());  // S1
+    auto g = Env::get(k);
+    REQUIRE(g.is_ok());       // A1
+    CHECK_EQ(g.unwrap(), v);  // A2 = THE PIN (byte-exact UTF-8 round-trip)
+
+    auto snap = Env::snapshot();
+    auto it = snap.find(k);
+    REQUIRE(it != snap.end());  // A3
+    CHECK_EQ(it->second, v);    // A4: snapshot carries the same bytes
+    (void)Env::unset(k);
+}
+
+TEST_CASE("Env::snapshot keys preserve native case and map lookups do not fold")
+{
+    // Contract pin (task 56) + D8 ruling: env.hpp snapshot @details — keys keep
+    // the native spelling and map lookups are case-sensitive on every platform,
+    // Windows included. Consumers that need Windows case-insensitive resolution
+    // must route names through Env::get (see the Windows contrast case).
+    const std::string k = "__PJH_SNAP_CASE__";
+    const std::string kAlt = "__pjh_snap_case__";
+    (void)Env::unset(k);
+    (void)Env::unset(kAlt);
+    REQUIRE(Env::set(k, "v").is_ok());  // S1
+
+    auto snap = Env::snapshot();
+    CHECK(snap.find(k) != snap.end());     // A1: exact spelling present
+    CHECK(snap.find(kAlt) == snap.end());  // A2 = THE PIN (no case folding)
+
+    bool list_exact = false;
+    for (const auto &[key, val] : Env::list())
+    {
+        if (key == k)
+            list_exact = (val == "v");
+        CHECK(key != kAlt);  // A3: list preserves the native spelling
+    }
+    CHECK(list_exact);  // A4
+    (void)Env::unset(k);
+}
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE("Env::get folds case while Env::snapshot().find does not (Windows)")
+{
+    // Contract pin (task 56) + D8: env.hpp get @details — Windows lookup is
+    // case-insensitive; snapshot @details — the map never folds. A captured
+    // map must not replace Env::get for case-insensitive name resolution.
+    const std::string k = "__PJH_FOLD_SNAP__";
+    const std::string kAlt = "__pjh_fold_snap__";
+    (void)Env::unset(k);
+    REQUIRE(Env::set(k, "v").is_ok());  // S1
+
+    auto snap = Env::snapshot();
+    CHECK(snap.find(k) != snap.end());     // A1: exact spelling present
+    CHECK(snap.find(kAlt) == snap.end());  // A2 = THE PIN (map is exact)
+
+    auto folded = Env::get(kAlt);
+    REQUIRE(folded.is_ok());         // A3 = THE PIN (get folds on Windows)
+    CHECK_EQ(folded.unwrap(), "v");  // A4
+    (void)Env::unset(k);
+}
+
+TEST_CASE("Env::snapshot and Env::list surface Windows drive pseudo entries under an empty key")
+{
+    // Pin (task 56, Windows lane only — NOT verified locally): the
+    // GetEnvironmentStringsW block contains drive current-directory
+    // pseudo-entries shaped "=C:=C:\...". for_each_env_entry finds '=' at
+    // index 0 and stores the remainder under the empty-string key; list()
+    // mirrors it. If a Windows runner reports no such entry, A1 fails: that is
+    // a contract finding (the implementation changed), not a reason to relax
+    // the assertion.
+    auto snap = Env::snapshot();
+    auto entries = Env::list();
+
+    auto it = snap.find(std::string());
+    REQUIRE(it != snap.end());          // A1 = THE PIN (pseudo entry present)
+    REQUIRE_GE(it->second.size(), 3u);  // A2: at least "D:=..."
+    CHECK_EQ(it->second[1], ':');       // A3
+    CHECK_EQ(it->second[2], '=');       // A4
+
+    bool list_has_empty = false;
+    for (const auto &[key, val] : entries)
+    {
+        if (key.empty())
+        {
+            list_has_empty = true;
+            REQUIRE_GE(val.size(), 3u);  // A5: same shape in list()
+            CHECK_EQ(val[1], ':');
+            CHECK_EQ(val[2], '=');
+        }
+    }
+    CHECK(list_has_empty);  // A6 = THE PIN (list mirrors snapshot)
+}
+#endif
