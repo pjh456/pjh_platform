@@ -11,7 +11,7 @@ if(NOT TARGET pjh_result)
     # install(EXPORT pjh_platformTargets) 依赖 pjh_result 位于某 export set，升级前需重新验证。
     FetchContent_Declare(pjh_result
         GIT_REPOSITORY https://github.com/pjh456/pjh_result.git
-        GIT_TAG 4e2d37f)
+        GIT_TAG 1c284c039df2526b9c948f1506149a115baaa9ca)
     FetchContent_MakeAvailable(pjh_result)
 endif()
 
