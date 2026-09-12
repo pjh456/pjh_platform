@@ -215,11 +215,22 @@ namespace pjh::platform
                 {
                     std::error_code sec;
                     if (!std::filesystem::is_directory(it->path(), sec))
+                    {
+                        // A per-entry stat failure makes the listing
+                        // unreliable: a partial list would drive the resync
+                        // reconcile to release live watches and erase
+                        // baselines. Fail the enumeration so the caller
+                        // early-returns and keeps the watch set and
+                        // baselines intact.
+                        if (sec)
+                            return pjh::result::Failure<ErrorCode>{map_error_code(sec)};
                         continue;
+                    }
                     dirs.push_back(it->path());
                 }
-                // A construction or increment failure leaves the listing
-                // truncated; it must not be used to reconcile the watch set.
+                // A construction, increment, or per-entry stat failure leaves
+                // the listing truncated; it must not be used to reconcile the
+                // watch set.
                 if (ec)
                     return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
                 return pjh::result::Result<std::vector<std::filesystem::path>, ErrorCode>::Ok(
