@@ -503,12 +503,10 @@ namespace pjh::platform
                 // FSEvents reports paths with symlinks resolved (e.g.
                 // /private/var/...); remap back into the lexical watch_root
                 // space so filters and snapshots stay consistent with the
-                // paths reported to callers.
-                // FSEvents reports paths with symlinks resolved (e.g.
-                // /private/var/...) and may append a trailing slash when the
-                // reported path is the watched directory itself. lexically_normal
-                // keeps that trailing slash, so drop it to make the path compare
-                // equal to the canonical root.
+                // paths reported to callers. FSEvents may append a trailing
+                // slash when reporting the watched directory itself, and
+                // lexically_normal keeps that trailing slash, so drop it to
+                // make the path compare equal to the canonical root.
                 std::filesystem::path p = pe.path.lexically_normal();
                 while (p.has_relative_path() && p.filename().empty()) p = p.parent_path();
                 if (!entry.canonical_root.empty())

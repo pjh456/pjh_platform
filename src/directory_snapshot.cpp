@@ -151,12 +151,6 @@ namespace pjh::platform
 
         for (; it != end; it.increment(ec))
         {
-            if (ec)
-            {
-                ec.clear();
-                continue;
-            }
-
             Entry entry;
             std::error_code sec;
             auto type = it->status(sec).type();
