@@ -1170,10 +1170,11 @@ TEST_CASE("FileWatcher file watch recovers events lost to an inotify queue overf
     // IN_Q_OVERFLOW is generated (man7 NOTES). The case anchors the direct
     // Modified delivery under a large burst; real overflow recovery is
     // anchored by the two "queue overflow" cases above in this file.
-    std::ifstream limit_file("/proc/sys/fs/inotify/max_queued_events");
-    int limit = 0;
-    if (!(limit_file >> limit) || limit <= 0)
-        return;  // cannot determine the queue size; skip
+    int limit = read_inotify_limit();
+    if (limit == 0 || limit > 131072)
+        return;  // limit unreadable, or far above the default 16384:
+                 // documented silent skip that bounds the worst-case wall
+                 // clock; the default CI lane never hits this branch
 
     int fd = ::open(file.c_str(), O_WRONLY | O_APPEND);
     REQUIRE(fd >= 0);
