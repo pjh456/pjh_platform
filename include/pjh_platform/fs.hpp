@@ -229,6 +229,53 @@ namespace pjh::platform
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
+         * @brief Appends @p content to @p p, creating @p p if it does not exist.
+         *
+         * @details Creates @p p when it does not exist; an existing file is
+         *          never truncated, so no previously written bytes are lost.
+         *          The parent directory must already exist. The content is
+         *          appended as raw bytes: no newline (LF/CRLF) translation, no
+         *          encoding validation, and no BOM is added or stripped. On
+         *          POSIX the file is opened with
+         *          `O_WRONLY | O_CREAT | O_APPEND` and mode `0644` (owner
+         *          read/write, group and others read, subject to the process
+         *          umask); on Windows it is opened with `FILE_APPEND_DATA` and
+         *          `OPEN_ALWAYS` (native append semantics, never
+         *          `GENERIC_WRITE`). Writes are looped to handle partial
+         *          writes; POSIX retries on `EINTR` and both platforms treat a
+         *          zero-length write on a non-empty buffer as a failure. An
+         *          empty @p content still creates @p p when it is absent (the
+         *          file is opened/created) and appends zero bytes when it is
+         *          present.
+         *
+         *          Concurrent note: the native append mode only makes a single
+         *          `write`/`WriteFile` call atomically positioned at end of
+         *          file; it does not make the whole @p content all-or-nothing
+         *          for concurrent appenders, which may interleave at write
+         *          boundaries.
+         *
+         * @param p Destination path.
+         * @param content Bytes to append.
+         *
+         * @return `Ok()` on success; `Failure(NotFound)` if the parent directory
+         *         of @p p does not exist, `Failure(PermissionDenied)` on access
+         *         errors, or the mapped error otherwise (for example
+         *         `LimitReached` on a full device, `IoError` on a write
+         *         failure).
+         *
+         * @exception Never throws.
+         *
+         * @sideeffect Creates @p p when missing, appends @p content to it and
+         *             updates its modification time. No existing bytes are
+         *             lost.
+         *
+         * @platform All supported platforms, with native append (`O_APPEND` /
+         *           `FILE_APPEND_DATA`) implementations.
+         */
+        [[nodiscard]] static auto append(const std::filesystem::path &p, std::string_view content)
+            -> pjh::result::Result<void, ErrorCode>;
+
+        /**
          * @brief Copies the file at @p from to @p to.
          *
          * @details Uses `std::filesystem::copy_file`. The parent directory of

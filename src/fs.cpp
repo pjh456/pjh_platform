@@ -316,6 +316,101 @@ namespace pjh::platform
 #endif
     }
 
+    // Fs::append routes every failure through the shared mapping table
+    // (detail::map_errno_to_error / detail::map_windows_error), per the task
+    // text. The existing write_file/read_file open arms classify their errors
+    // with a per-family inline form instead; that divergence is legacy and is
+    // deliberately NOT changed here (task 30 ruling: full-table routing for
+    // those two APIs is out of scope). Consequence: append reports a few errno
+    // values differently from write_file (for example ENOSPC -> LimitReached
+    // and ENOTDIR -> NotFound).
+    auto Fs::append(const std::filesystem::path &p, std::string_view content)
+        -> pjh::result::Result<void, ErrorCode>
+    {
+#if PJH_PLATFORM_WINDOWS
+        // FILE_APPEND_DATA (not GENERIC_WRITE) gives end-of-file semantics;
+        // OPEN_ALWAYS creates when missing and never truncates. FILE_SHARE_READ
+        // lets a later read_file reader open the file concurrently, unlike
+        // write_file's exclusive share mode.
+        HANDLE hFile = CreateFileW(
+            p.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE)
+            return pjh::result::Failure<ErrorCode>{detail::map_windows_error(GetLastError())};
+
+        if (!content.empty())
+        {
+            const char *data = content.data();
+            std::size_t remaining = content.size();
+            while (remaining > 0)
+            {
+                // Cap each call at 1 GiB so a content larger than a DWORD does
+                // not truncate (the defect write_file inherits from its single
+                // untruncated WriteFile).
+                DWORD chunk = static_cast<DWORD>(std::min<std::uint64_t>(remaining, 1u << 30));
+                DWORD written = 0;
+                if (!WriteFile(hFile, data, chunk, &written, nullptr))
+                {
+                    DWORD err = GetLastError();
+                    CloseHandle(hFile);
+                    return pjh::result::Failure<ErrorCode>{detail::map_windows_error(err)};
+                }
+                if (written == 0)
+                {
+                    // A successful call that wrote nothing makes no progress;
+                    // fail instead of spinning (GetLastError is not meaningful
+                    // here). Mirrors the POSIX zero-write guard.
+                    CloseHandle(hFile);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                data += written;
+                remaining -= static_cast<std::size_t>(written);
+            }
+        }
+
+        CloseHandle(hFile);
+        return pjh::result::Result<void, ErrorCode>::Ok();
+
+#else
+        int fd =
+            ::open(p.c_str(), O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        if (fd == -1)
+            return pjh::result::Failure<ErrorCode>{detail::map_errno_to_error(errno)};
+
+        if (!content.empty())
+        {
+            const char *data = content.data();
+            std::size_t remaining = content.size();
+            while (remaining > 0)
+            {
+                ssize_t written = ::write(fd, data, remaining);
+                if (written == -1)
+                {
+                    if (errno == EINTR)
+                        continue;
+                    auto mapped = detail::map_errno_to_error(errno);
+                    ::close(fd);
+                    return pjh::result::Failure<ErrorCode>{mapped};
+                }
+                if (written == 0)
+                {
+                    // A zero-length write on a non-empty buffer makes no
+                    // progress; bail out instead of spinning forever.
+                    ::close(fd);
+                    return pjh::result::Failure<ErrorCode>{ErrorCode::IoError};
+                }
+                data += written;
+                remaining -= static_cast<std::size_t>(written);
+            }
+        }
+
+        // The close result is intentionally ignored: a failed close cannot
+        // roll back bytes already written (same as write_file).
+        ::close(fd);
+        return pjh::result::Result<void, ErrorCode>::Ok();
+#endif
+    }
+
     auto Fs::copy_file(
         const std::filesystem::path &from, const std::filesystem::path &to, bool overwrite)
         -> pjh::result::Result<void, ErrorCode>
