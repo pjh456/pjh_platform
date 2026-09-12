@@ -44,6 +44,13 @@ jobs:
             cxx: cl
             ccache_variant: ccache
             cmake_args: ""
+          - name: Linux (GCC, CMake 3.20)
+            os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+            ccache_variant: ccache
+            cmake_version: "3.20.6"
+            cmake_args: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +70,20 @@ jobs:
           $vsPath = vswhere -latest -property installationPath
           cmd /c "`"$vsPath\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object { Add-Content $env:GITHUB_ENV $_ }
 
+      - name: Setup CMake ${{ matrix.cmake_version }}
+        if: matrix.cmake_version != ''
+        shell: bash
+        run: |
+          version="${{ matrix.cmake_version }}"
+          arch="$(uname -m)"
+          url="https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${arch}.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/cmake.tar.gz" "$url"
+          tar --extract --gzip --file "$RUNNER_TEMP/cmake.tar.gz" \
+            --directory "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/cmake-${version}-linux-${arch}/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cmake-${version}-linux-${arch}/bin/cmake" --version
+
       - name: Configure CMake
         env:
           CC: ${{ matrix.cc }}
@@ -78,4 +99,4 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --no-tests=error
