@@ -1975,6 +1975,52 @@ TEST_CASE("FileWatcher add returns PermissionDenied when the parent directory is
     std::error_code rec;
     std::filesystem::remove_all(p, rec);
 }
+
+TEST_CASE("FileWatcher add and remove map a removed working directory to NotFound")
+{
+    // make_absolute resolves a relative path against the process cwd; a
+    // removed cwd makes that resolution fail with ENOENT. Both add() and
+    // remove() share make_absolute, so both must surface the single table's
+    // mapped code. Pre-fix the shared helper hardcoded Unknown, so this case
+    // is the discriminator for the mapping fix.
+    auto p = make_test_dir();
+    auto doomed = p / "doomed";
+    REQUIRE(std::filesystem::create_directories(doomed));
+
+    auto original = std::filesystem::current_path();
+
+    // Restores the process cwd on every exit path (including a REQUIRE
+    // failure's unwind); a leaked removed cwd would break every later case.
+    struct RestoreCwd
+    {
+        std::filesystem::path dir;
+
+        ~RestoreCwd()
+        {
+            std::error_code ec;
+            std::filesystem::current_path(dir, ec);
+        }
+    } guard{original};
+
+    std::error_code cec;
+    std::filesystem::current_path(doomed, cec);
+    REQUIRE_FALSE(cec);
+
+    std::error_code rec;
+    std::filesystem::remove(doomed, rec);
+    REQUIRE_FALSE(rec);
+
+    FileWatcher w;
+    auto add = w.add("relative_name", false);
+    CHECK(add.is_err());
+    CHECK_EQ(add.unwrap_err(), ErrorCode::NotFound);
+
+    auto rem = w.remove("relative_name");
+    CHECK(rem.is_err());
+    CHECK_EQ(rem.unwrap_err(), ErrorCode::NotFound);
+
+    std::filesystem::remove_all(p, rec);
+}
 #endif
 
 #if PJH_PLATFORM_MACOS

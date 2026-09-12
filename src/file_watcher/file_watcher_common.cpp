@@ -20,7 +20,7 @@ namespace pjh::platform::detail
         std::error_code ec;
         auto abs = std::filesystem::absolute(p, ec);
         if (ec)
-            return pjh::result::Failure<ErrorCode>{ErrorCode::Unknown};
+            return pjh::result::Failure<ErrorCode>{map_error_code(ec)};
         return pjh::result::Result<std::filesystem::path, ErrorCode>::Ok(abs.lexically_normal());
     }
 
