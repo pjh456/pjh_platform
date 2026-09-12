@@ -15,36 +15,42 @@ jobs:
       matrix:
         include:
           - name: Linux (GCC)
+            cache_key: Linux-GCC
             os: ubuntu-latest
             cc: gcc
             cxx: g++
             ccache_variant: ccache
             cmake_args: ""
           - name: Linux (Clang)
+            cache_key: Linux-Clang
             os: ubuntu-latest
             cc: clang
             cxx: clang++
             ccache_variant: ccache
             cmake_args: ""
           - name: Linux (Clang, ASan+UBSan)
+            cache_key: Linux-Clang-ASan-UBSan
             os: ubuntu-latest
             cc: clang
             cxx: clang++
             ccache_variant: ccache
             cmake_args: "-DCMAKE_BUILD_TYPE=Debug -DPJH_PLATFORM_SANITIZERS=ON"
           - name: macOS
+            cache_key: macOS
             os: macos-latest
             cc: clang
             cxx: clang++
             ccache_variant: ccache
             cmake_args: ""
           - name: Windows (MSVC)
+            cache_key: Windows-MSVC
             os: windows-latest
             cc: cl
             cxx: cl
             ccache_variant: ccache
             cmake_args: ""
           - name: Linux (GCC, CMake 3.20)
+            cache_key: Linux-GCC-CMake-3.20
             os: ubuntu-latest
             cc: gcc
             cxx: g++
@@ -60,7 +66,7 @@ jobs:
       - name: Compiler cache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ matrix.name }}
+          key: ${{ matrix.cache_key }}
           variant: ${{ matrix.ccache_variant }}
 
       - name: Setup MSVC
