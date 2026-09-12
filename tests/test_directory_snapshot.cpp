@@ -491,6 +491,47 @@ TEST_CASE("DirectorySnapshot hash-list matching benchmark gated by PJH_HASH_MATC
               << " total_us=" << total_us << " us_per_run=" << total_us / iters << "\n";
 }
 
+TEST_CASE("DirectorySnapshot capture benchmark gated by PJH_CAPTURE_BENCH_FILES")
+{
+    // Baseline / regression benchmark for the raw readdir+stat capture path
+    // (no hashing, no hash-list matching, no diff/status). The measurement and
+    // its stdout output happen only when PJH_CAPTURE_BENCH_FILES names the file
+    // count to create (recommend 10000; 5000 on slow machines, e.g. Windows
+    // CI); a plain `ctest` run is a no-op and stays silent.
+    const char *raw = std::getenv("PJH_CAPTURE_BENCH_FILES");
+    if (raw == nullptr)
+        return;
+    const auto n = static_cast<std::size_t>(std::strtoull(raw, nullptr, 10));
+    REQUIRE(n >= 1000u);
+
+    auto p = make_test_dir();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        auto name = "f_" + std::to_string(i) + ".txt";
+        REQUIRE(pjh::platform::Fs::write_file(p / name, "").is_ok());
+    }
+
+    // Identity gate, outside the measured window: the pure path carries no
+    // hashing, so every captured entry is a regular file.
+    auto check = DirectorySnapshot::capture(p);
+    REQUIRE(check.is_ok());
+    REQUIRE_EQ(check.unwrap().file_count(), n);
+
+    (void)DirectorySnapshot::capture(p);  // warm-up
+
+    const int iters = 3;
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < iters; ++i)
+    {
+        auto r = DirectorySnapshot::capture(p);
+        REQUIRE(r.is_ok());
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    const auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    std::cout << "capture-bench: files=" << n << " iters=" << iters << " total_us=" << total_us
+              << " us_per_run=" << total_us / iters << "\n";
+}
+
 TEST_CASE("DirectorySnapshot skips broken symbolic links")
 {
 #if PJH_PLATFORM_UNIX
