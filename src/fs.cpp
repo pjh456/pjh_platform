@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <pjh_platform/env.hpp>
@@ -62,6 +63,41 @@ namespace pjh::platform
             if (rem_ec)
                 return pjh::result::Failure<ErrorCode>{detail::map_error_code(rem_ec)};
             return pjh::result::Result<void, ErrorCode>::Ok();
+        }
+
+        // Creates an empty regular file at @p tmp exclusively (O_EXCL on POSIX,
+        // CREATE_NEW on Windows), so two writers can never claim the same
+        // temporary name. Failure(AlreadyExists) signals that the name is taken
+        // (a stale temporary file or a reused process id); the caller retries
+        // with the next counter value. Errors go through the shared mapping
+        // table (task 59 §4), not a per-TU table.
+        auto create_exclusive_empty(const std::filesystem::path &tmp)
+            -> pjh::result::Result<void, ErrorCode>
+        {
+#if PJH_PLATFORM_WINDOWS
+            HANDLE h = CreateFileW(
+                tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE)
+                return pjh::result::Failure<ErrorCode>{detail::map_windows_error(GetLastError())};
+            CloseHandle(h);
+            return pjh::result::Result<void, ErrorCode>::Ok();
+#else
+            int fd = ::open(
+                tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+            if (fd == -1)
+                return pjh::result::Failure<ErrorCode>{detail::map_errno_to_error(errno)};
+            ::close(fd);
+            return pjh::result::Result<void, ErrorCode>::Ok();
+#endif
+        }
+
+        // Best-effort removal that never changes the caller's primary error:
+        // the temp file is always a regular file created by this call, so
+        // remove (not remove_all) is correct.
+        void remove_temp_best_effort(const std::filesystem::path &tmp)
+        {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
         }
 
     }
@@ -409,6 +445,74 @@ namespace pjh::platform
         ::close(fd);
         return pjh::result::Result<void, ErrorCode>::Ok();
 #endif
+    }
+
+    auto Fs::write_file_atomic(const std::filesystem::path &p, std::string_view content)
+        -> pjh::result::Result<void, ErrorCode>
+    {
+        // 1) A directory target cannot be replaced by a file; reject it before
+        //    creating any temporary file (symlinks-to-directories included,
+        //    since is_directory follows links). This is a TOCTOU pre-check: if
+        //    the target type changes concurrently, Fs::rename's native result
+        //    is the fallback.
+        std::error_code dir_ec;
+        if (std::filesystem::is_directory(p, dir_ec))
+            return pjh::result::Failure<ErrorCode>{ErrorCode::InvalidArgument};
+
+        // 2) Reserve a unique sibling temp name (process id + process-wide
+        //    counter). The counter is atomic because concurrent callers may
+        //    race even though the library itself creates no threads.
+#if PJH_PLATFORM_WINDOWS
+        const auto pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+        const auto pid = static_cast<unsigned long>(::getpid());
+#endif
+        static std::atomic<unsigned long> counter{0};
+
+        constexpr int kMaxAttempts = 128;
+        std::filesystem::path tmp;
+        bool reserved = false;
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            const unsigned long seq = counter.fetch_add(1, std::memory_order_relaxed);
+            std::filesystem::path candidate = p;
+            candidate += std::filesystem::path(
+                "." + std::to_string(pid) + "." + std::to_string(seq) + ".tmp");
+            auto created = create_exclusive_empty(candidate);
+            if (created.is_ok())
+            {
+                tmp = std::move(candidate);
+                reserved = true;
+                break;
+            }
+            if (created.unwrap_err() != ErrorCode::AlreadyExists)
+                return created;  // NotFound / PermissionDenied / mapped
+            // Name taken (stale temp or reused pid): try the next counter value.
+        }
+        if (!reserved)
+            return pjh::result::Failure<ErrorCode>{ErrorCode::AlreadyExists};
+
+        // 3) Fill the reserved temp. Reusing write_file keeps one byte-writing
+        //    implementation, per the task text (§3.2 reserve-then-write). The
+        //    temp name is already owned by this call, so the reopen cannot
+        //    collide; only an external delete+recreate could interfere, which is
+        //    outside the threat model.
+        auto written = Fs::write_file(tmp, content);
+        if (written.is_err())
+        {
+            remove_temp_best_effort(tmp);  // best effort; never masks `written`
+            return written;
+        }
+
+        // 4) Atomically replace the target. The temp is a sibling, so the
+        //    rename stays on one filesystem and never takes the copy fallback.
+        auto renamed = Fs::rename(tmp, p, /*overwrite=*/true);
+        if (renamed.is_err())
+        {
+            remove_temp_best_effort(tmp);  // best effort; never masks `renamed`
+            return renamed;
+        }
+        return pjh::result::Result<void, ErrorCode>::Ok();
     }
 
     auto Fs::copy_file(

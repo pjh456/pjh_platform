@@ -276,6 +276,70 @@ namespace pjh::platform
             -> pjh::result::Result<void, ErrorCode>;
 
         /**
+         * @brief Atomically replaces @p p with @p content.
+         *
+         * @details Writes @p content to a uniquely named temporary file in the
+         *          same directory as @p p (the name embeds the process id and a
+         *          process-wide monotonic counter), then atomically renames that
+         *          temporary file over @p p with replace semantics. The
+         *          temporary file is created exclusively (`O_CREAT|O_EXCL` on
+         *          POSIX, `CREATE_NEW` on Windows), so concurrent writers never
+         *          overwrite one another's temporary file; on a name collision
+         *          (a stale temporary file, or a reused process id) the counter
+         *          is advanced and the creation retried a bounded number of
+         *          times. Because the temporary file is a sibling of @p p it
+         *          lives on the same filesystem, so the rename is atomic and
+         *          never falls back to a cross-device copy.
+         *
+         *          A reader of @p p observes either its previous contents or the
+         *          complete new contents, never a half-written file. On any
+         *          failure after the temporary file has been created it is
+         *          removed on a best-effort basis; a cleanup failure never
+         *          replaces the primary error and an existing @p p is left
+         *          untouched. If @p p is an existing directory the call fails
+         *          before any temporary file is created. A symbolic link that
+         *          points to a directory is rejected in the same way (the
+         *          directory check follows links).
+         *
+         *          Atomicity is not power-loss durability: this function does
+         *          not call `fsync` or `FlushFileBuffers`, so a system crash can
+         *          lose the new contents and leave a stale temporary file
+         *          behind, and on filesystems that reorder metadata and data it
+         *          can even leave @p p transiently empty or truncated. The only
+         *          guarantee provided is atomicity as observed by concurrent
+         *          readers.
+         *
+         *          The new @p p inherits the temporary file's permissions: on
+         *          POSIX the created mode `0644` subject to the process umask; on
+         *          Windows the default attributes. The previous target's mode,
+         *          owner, group, and ACL are not preserved.
+         *
+         * @param p Destination path, replaced atomically.
+         * @param content Bytes to write as the new contents of @p p.
+         *
+         * @return `Ok()` on success; `Failure(InvalidArgument)` if @p p is an
+         *         existing directory, `Failure(NotFound)` if the parent
+         *         directory of @p p does not exist, `Failure(PermissionDenied)`
+         *         on access errors, `Failure(LimitReached)` on a full device,
+         *         `Failure(AlreadyExists)` if a unique temporary name cannot be
+         *         reserved, or another mapped error from the write or the
+         *         rename.
+         *
+         * @exception Never throws.
+         *
+         * @sideeffect Creates and then removes a temporary file in the
+         *             directory of @p p; on success replaces @p p and its
+         *             permissions.
+         *
+         * @platform All supported platforms; the temporary file is created with
+         *           the native exclusive-create primitive and replaced with the
+         *           native atomic rename.
+         */
+        [[nodiscard]] static auto write_file_atomic(
+            const std::filesystem::path &p, std::string_view content)
+            -> pjh::result::Result<void, ErrorCode>;
+
+        /**
          * @brief Copies the file at @p from to @p to.
          *
          * @details Uses `std::filesystem::copy_file`. The parent directory of

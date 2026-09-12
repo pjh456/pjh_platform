@@ -1274,3 +1274,361 @@ TEST_CASE("Fs::append returns PermissionDenied when the file is read-only")
     std::filesystem::remove(f, sec);
 }
 #endif
+
+// ── Task 59 pins: Fs::write_file_atomic ──────────────────────────────────
+// Pin the Fs::write_file_atomic contract (fs.hpp Doxygen): same-directory
+// unique temp plus exclusive create, atomic replace, failure cleanup that
+// never masks the first error, target-is-directory InvalidArgument, parent
+// missing NotFound, byte-exact round-trips, and permission replacement.
+// T1-T4 and T6-T10 are lane-invariant; T5/T11 (POSIX) and T12 (Windows) are
+// platform-gated in-place with a self-skip probe / RAII restore, mirroring
+// the permission cases above. Concurrency uniqueness is covered
+// deterministically by T10 (pid + atomic counter + residual assertions); a
+// real cross-process race is not manufactured (the library owns no threads
+// and would need a Threads::Threads link). Every case uses a per-case unique
+// directory under temp, cleared before and after.
+
+TEST_CASE("Fs::write_file_atomic creates the file when it does not exist")
+{
+    // Contract pin (task 59): "Atomically replaces @p p with @p content".
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_create";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "save.json";
+
+    REQUIRE(Fs::write_file_atomic(target, "created").is_ok());  // A1
+    CHECK(Fs::exists(target));                                  // A2
+    CHECK(Fs::is_regular_file(target));                         // A3
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());               // A4
+    CHECK_EQ(r.unwrap(), "created");  // A5 = THE PIN
+    auto lst = Fs::list_directory(root);
+    REQUIRE(lst.is_ok());               // A6
+    CHECK_EQ(lst.unwrap().size(), 1u);  // A7 = no temp residue
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic overwrites an existing file and leaves no temp residue")
+{
+    // Contract pin (task 59): "never a half-written file"; a successful call
+    // leaves exactly the target and no temporary sibling.
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_overwrite";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "doc.txt";
+    REQUIRE(Fs::write_file(target, "old").is_ok());  // S2 seed
+
+    REQUIRE(Fs::write_file_atomic(target, "new").is_ok());  // A1
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());           // A2
+    CHECK_EQ(r.unwrap(), "new");  // A3 = THE PIN (replaced, not appended)
+    auto lst = Fs::list_directory(root);
+    REQUIRE(lst.is_ok());               // A4
+    CHECK_EQ(lst.unwrap().size(), 1u);  // A5 = no temp residue
+    for (const auto &entry : lst.unwrap())
+        CHECK_EQ(entry.filename().string().find(".tmp"), std::string::npos);  // A6
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic returns NotFound when the parent directory is missing")
+{
+    // Contract pin (task 59): "Failure(NotFound) if the parent directory of
+    // @p p does not exist". The exclusive create is the first filesystem touch,
+    // so POSIX ENOENT / Windows ERROR_PATH_NOT_FOUND map to NotFound.
+    auto parent = Fs::temp_directory() / "pjh_platform_test_atomic_missing_parent";
+    std::error_code rec;
+    std::filesystem::remove_all(parent, rec);  // defensive: stale scratch
+
+    auto r = Fs::write_file_atomic(parent / "f.txt", "x");
+    CHECK(r.is_err());                              // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::NotFound);  // A2 = THE PIN
+    // Positive control: with the parent present, the atomic write succeeds.
+    REQUIRE(std::filesystem::create_directories(parent));         // A3
+    CHECK(Fs::write_file_atomic(parent / "f.txt", "x").is_ok());  // A4
+
+    std::filesystem::remove_all(parent, rec);
+}
+
+TEST_CASE("Fs::write_file_atomic fails with InvalidArgument when the target is a directory")
+{
+    // Contract pin (task 59): "Failure(InvalidArgument) if @p p is an existing
+    // directory" -- rejected before any temporary file is created, and the
+    // directory survives.
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_dir_target";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto dir = root / "adir";
+    REQUIRE(std::filesystem::create_directories(dir));  // S2
+
+    auto r = Fs::write_file_atomic(dir, "x");
+    CHECK(r.is_err());                                     // A1
+    CHECK_EQ(r.unwrap_err(), ErrorCode::InvalidArgument);  // A2 = THE PIN
+    CHECK(Fs::is_directory(dir));                          // A3 (still a dir)
+    auto lst = Fs::list_directory(root);
+    REQUIRE(lst.is_ok());               // A4
+    CHECK_EQ(lst.unwrap().size(), 1u);  // A5 = no temp created
+
+    std::filesystem::remove_all(root, sec);
+}
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE(
+    "Fs::write_file_atomic keeps the original content and no residue when temp creation fails")
+{
+    // Contract pin (task 59): "an existing @p p is left untouched" and the
+    // first error (PermissionDenied) is not masked. POSIX: creating the temp
+    // inside a read-only (0555) directory => EACCES. Self-skip + RAII restore
+    // per the write_file/append permission cases above.
+    auto dir = Fs::temp_directory() / "pjh_platform_test_atomic_perm_dir";
+    std::error_code sec;
+    std::filesystem::remove_all(dir, sec);  // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(dir));
+    auto target = dir / "keep.txt";
+    REQUIRE(Fs::write_file(target, "original").is_ok());
+    auto original = std::filesystem::status(dir, sec).permissions();
+    REQUIRE_FALSE(sec);
+    std::filesystem::permissions(
+        dir,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec |
+            std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_read | std::filesystem::perms::others_exec,
+        sec);
+    REQUIRE_FALSE(sec);
+    // Self-skip probe: if a file can still be created inside the read-only
+    // directory, EACCES cannot be manufactured here (privileged process, e.g.
+    // root on CI): restore and skip (task 16/30 precedent).
+    {
+        int probe = ::open(((dir / "probe").string()).c_str(), O_WRONLY | O_CREAT, 0644);
+        if (probe != -1)
+        {
+            ::close(probe);
+            std::filesystem::remove(dir / "probe", sec);
+            std::filesystem::permissions(dir, original, sec);
+            std::filesystem::remove_all(dir, sec);
+            return;
+        }
+    }
+    {
+        // Restores the mode on every exit path (including a REQUIRE failure's
+        // unwind); a leaked 0555 directory would break the next case's cleanup.
+        struct RestorePermissions
+        {
+            std::filesystem::path path;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(path, perms, ec);
+            }
+        } guard{dir, original};
+
+        auto r = Fs::write_file_atomic(target, "new");
+        CHECK(r.is_err());                                      // A1
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // A2 = THE PIN
+        auto rd = Fs::read_file(target);
+        REQUIRE(rd.is_ok());                // A3
+        CHECK_EQ(rd.unwrap(), "original");  // A4 = original preserved
+        auto lst = Fs::list_directory(dir);
+        REQUIRE(lst.is_ok());               // A5
+        CHECK_EQ(lst.unwrap().size(), 1u);  // A6 = only the target, no temp
+    }
+    std::filesystem::remove_all(dir, sec);
+}
+#endif
+
+TEST_CASE("Fs::write_file_atomic with empty content creates an empty file")
+{
+    // Contract pin (task 59): an empty @p content is a valid write and yields a
+    // zero-byte regular file (byte-level API, no text heuristic).
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_empty_create";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "empty.txt";
+
+    REQUIRE(Fs::write_file_atomic(target, "").is_ok());  // A1
+    CHECK(Fs::exists(target));                           // A2
+    CHECK(Fs::is_regular_file(target));                  // A3
+    auto sz = Fs::file_size(target);
+    REQUIRE(sz.is_ok());        // A4
+    CHECK_EQ(sz.unwrap(), 0u);  // A5 = THE PIN (zero bytes)
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic with empty content replaces an existing file")
+{
+    // Contract pin (task 59): replace semantics apply to an empty payload too
+    // (the existing content is discarded, not appended to).
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_empty_replace";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "shrunk.txt";
+    REQUIRE(Fs::write_file(target, "keep").is_ok());  // S2 seed
+
+    REQUIRE(Fs::write_file_atomic(target, "").is_ok());  // A1
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());        // A2
+    CHECK_EQ(r.unwrap(), "");  // A3 = THE PIN (emptied, not kept)
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic round-trips CJK bytes")
+{
+    // Contract pin (task 59): UTF-8 content passes through unvalidated and
+    // unmodified. Bytes are written as explicit \x escapes so the case does
+    // not depend on the host compiler's source charset; the literal decodes to
+    // U+4E2D U+6587 U+539F U+5B50 U+5199 (15 bytes).
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_cjk";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "cjk.txt";
+    const std::string cjk = "\xE4\xB8\xAD\xE6\x96\x87\xE5\x8E\x9F\xE5\xAD\x90\xE5\x86\x99";
+
+    REQUIRE(Fs::write_file_atomic(target, cjk).is_ok());  // A1
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());                // A2
+    CHECK_EQ(r.unwrap(), cjk);         // A3 = THE PIN (byte-exact CJK)
+    CHECK_EQ(r.unwrap().size(), 15u);  // A4 (5 code points, 15 bytes)
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic round-trips embedded NUL bytes")
+{
+    // Contract pin (task 59): content is length-delimited raw bytes, not a C
+    // string; an embedded NUL is written and read back verbatim.
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_nul";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "nul.bin";
+    const std::string_view with_nul("a\0b", 3);  // 3 bytes: 'a', NUL, 'b'
+
+    REQUIRE(Fs::write_file_atomic(target, with_nul).is_ok());  // A1
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());  // A2
+    const std::string expected("a\0b", 3);
+    CHECK_EQ(r.unwrap().size(), 3u);  // A3
+    CHECK_EQ(r.unwrap(), expected);   // A4 = THE PIN (NUL kept)
+
+    std::filesystem::remove_all(root, sec);
+}
+
+TEST_CASE("Fs::write_file_atomic accumulates rapid calls without colliding or leaving residue")
+{
+    // Contract pin (task 59): the pid + process-wide atomic counter makes every
+    // temporary name unique, so back-to-back calls on one target neither
+    // collide nor leave a temporary sibling behind. A true cross-process race
+    // is intentionally not manufactured (see the section comment).
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_rapid";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "rapid.txt";
+    constexpr int kCalls = 32;
+    for (int i = 0; i < kCalls; ++i)
+    {
+        const std::string content = "value-" + std::to_string(i);
+        REQUIRE(Fs::write_file_atomic(target, content).is_ok());  // A1
+        auto lst = Fs::list_directory(root);
+        REQUIRE(lst.is_ok());               // A2
+        CHECK_EQ(lst.unwrap().size(), 1u);  // A3 = no residue on any iteration
+    }
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());                                           // A4
+    CHECK_EQ(r.unwrap(), "value-" + std::to_string(kCalls - 1));  // A5 = last wins
+
+    std::filesystem::remove_all(root, sec);
+}
+
+#if PJH_PLATFORM_UNIX
+TEST_CASE("Fs::write_file_atomic replaces the target permissions with the temp file's")
+{
+    // Contract pin (task 59): "The new @p p inherits the temporary file's
+    // permissions". The control file is created by Fs::write_file with the same
+    // umask, so its mode equals the temp's; the pre-existing 0400 target mode
+    // must NOT survive the replace.
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_perms";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "perm.txt";
+    auto control = root / "control.txt";
+    REQUIRE(Fs::write_file(target, "old").is_ok());  // S2
+    REQUIRE(Fs::write_file(control, "x").is_ok());   // S3 (same umask as the temp)
+    std::filesystem::permissions(
+        target, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace, sec);
+    REQUIRE_FALSE(sec);  // S4
+
+    REQUIRE(Fs::write_file_atomic(target, "new").is_ok());  // A1
+    auto st_target = std::filesystem::status(target, sec);
+    REQUIRE_FALSE(sec);  // A2
+    auto st_control = std::filesystem::status(control, sec);
+    REQUIRE_FALSE(sec);                                           // A3
+    CHECK_EQ(st_target.permissions(), st_control.permissions());  // A4 = THE PIN
+    CHECK(
+        (st_target.permissions() & std::filesystem::perms::owner_write) !=
+        std::filesystem::perms::none);  // A5 (0400 not preserved)
+    auto r = Fs::read_file(target);
+    REQUIRE(r.is_ok());           // A6
+    CHECK_EQ(r.unwrap(), "new");  // A7
+
+    std::filesystem::remove_all(root, sec);
+}
+#endif
+
+#if PJH_PLATFORM_WINDOWS
+TEST_CASE(
+    "Fs::write_file_atomic fails and preserves the read-only target when rename cannot replace it")
+{
+    // Contract pin (task 59): on Windows MoveFileExW(MOVEFILE_REPLACE_EXISTING)
+    // refuses a FILE_ATTRIBUTE_READONLY target with ERROR_ACCESS_DENIED, so the
+    // atomic replace fails, the temp is cleaned up, and the original content is
+    // preserved (the rename-failure cleanup arm).
+    auto root = Fs::temp_directory() / "pjh_platform_test_atomic_readonly";
+    std::error_code sec;
+    std::filesystem::remove_all(root, sec);              // defensive: stale scratch
+    REQUIRE(std::filesystem::create_directories(root));  // S1
+    auto target = root / "ro.txt";
+    REQUIRE(Fs::write_file(target, "keep").is_ok());  // S2
+    auto original = std::filesystem::status(target, sec).permissions();
+    REQUIRE_FALSE(sec);
+    std::filesystem::permissions(
+        target, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace, sec);
+    REQUIRE_FALSE(sec);  // S3
+    {
+        struct RestorePermissions
+        {
+            std::filesystem::path file;
+            std::filesystem::perms perms;
+
+            ~RestorePermissions()
+            {
+                std::error_code ec;
+                std::filesystem::permissions(file, perms, ec);
+            }
+        } guard{target, original};
+
+        auto r = Fs::write_file_atomic(target, "new");
+        CHECK(r.is_err());                                      // A1
+        CHECK_EQ(r.unwrap_err(), ErrorCode::PermissionDenied);  // A2 = THE PIN
+        auto rd = Fs::read_file(target);
+        REQUIRE(rd.is_ok());            // A3
+        CHECK_EQ(rd.unwrap(), "keep");  // A4 = original preserved
+        auto lst = Fs::list_directory(root);
+        REQUIRE(lst.is_ok());               // A5
+        CHECK_EQ(lst.unwrap().size(), 1u);  // A6 = no temp residue
+    }
+    std::filesystem::remove_all(root, sec);
+}
+#endif
