@@ -53,6 +53,22 @@ namespace pjh::platform
      *          given), mirroring the file-matching behaviour of the file
      *          watcher.
      *
+     *          When two snapshots of the same directory are compared, a
+     *          regular file whose content hash is available in both
+     *          snapshots is unchanged when the two hashes are equal; when
+     *          either side lacks a hash the comparison falls back to
+     *          equality of file size and last-write time, in which a
+     *          same-size in-place content change whose last-write time
+     *          does not change (such as a rewrite within the file
+     *          system's mtime quantum) is not detectable.
+     *
+     *          Capture continues past per-entry read failures: an entry
+     *          whose status cannot be determined is omitted, and an entry
+     *          whose size or last-write time cannot be read is recorded
+     *          with that field left at its default value of zero. No
+     *          per-entry failure is reported, so a successful capture may
+     *          be a partial snapshot.
+     *
      * @platform Windows, Linux, macOS.
      */
     class DirectorySnapshot

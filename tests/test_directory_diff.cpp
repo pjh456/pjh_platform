@@ -629,3 +629,49 @@ TEST_CASE("DirectoryDiff reports no change when a broken symbolic link appears")
     CHECK(diff.unwrap().changes().empty());
 #endif
 }
+
+TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
+{
+    // Contract pin (task 36): the class @details of directory_snapshot.hpp
+    // states that the size/mtime fallback is blind to a same-size in-place
+    // content change whose last-write time does not change. The mtime is
+    // restored to the captured value explicitly (the value read back is the
+    // stored value, and setting it again stores the same value on every
+    // supported filesystem), so no clock quantum is relied on. The positive
+    // control (hashed captures of the same tree, same case) proves the
+    // rewrite actually happened and is detected when hashes are present on
+    // both sides, so the negative pin is non-vacuous by construction.
+    auto p = make_test_dir("blindspot");
+    auto file = p / "data.txt";
+    REQUIRE(pjh::platform::Fs::write_file(file, "aaaa").is_ok());
+    auto before = DirectorySnapshot::capture(p);  // no hash
+    REQUIRE(before.is_ok());
+    auto before_snap = before.unwrap();
+    REQUIRE(before_snap.get("data.txt").has_value());
+    const auto mtime0 = before_snap.get("data.txt")->m_mtime_ns;
+    auto before_h = DirectorySnapshot::capture(p, nullptr);  // hash all
+    REQUIRE(before_h.is_ok());
+    REQUIRE(before_h.unwrap().get("data.txt")->m_hash.has_value());
+    REQUIRE(pjh::platform::Fs::write_file(file, "bbbb").is_ok());  // same size
+    std::error_code ec;
+    std::filesystem::last_write_time(
+        file, std::filesystem::file_time_type{std::filesystem::file_time_type::duration{mtime0}},
+        ec);
+    REQUIRE_FALSE(ec);
+    auto after = DirectorySnapshot::capture(p);
+    REQUIRE(after.is_ok());
+    auto after_snap = after.unwrap();
+    REQUIRE(after_snap.get("data.txt").has_value());
+    CHECK_EQ(after_snap.get("data.txt")->m_mtime_ns, mtime0);
+    auto diff = DirectoryDiff::compare(before_snap, after_snap);
+    REQUIRE(diff.is_ok());
+    CHECK(diff.unwrap().empty());
+    auto after_h = DirectorySnapshot::capture(p, nullptr);
+    REQUIRE(after_h.is_ok());
+    REQUIRE(after_h.unwrap().get("data.txt")->m_hash.has_value());
+    auto diff_h = DirectoryDiff::compare(before_h.unwrap(), after_h.unwrap());
+    REQUIRE(diff_h.is_ok());
+    auto &changes = diff_h.unwrap().changes();
+    REQUIRE_EQ(changes.size(), 1u);
+    CHECK(has_change(changes, DirectoryDiff::ChangeKind::Modified, file));
+}
