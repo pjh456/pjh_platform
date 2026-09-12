@@ -180,7 +180,7 @@ TEST_CASE("DirectoryDiff never reports directories as modified")
 
     auto before_snap = before.unwrap();
     auto after_snap = after.unwrap();
-    REQUIRE_NE(before_snap.get("sub")->m_mtime_ns, after_snap.get("sub")->m_mtime_ns);
+    REQUIRE_NE(before_snap.get("sub")->m_mtime, after_snap.get("sub")->m_mtime);
 
     auto diff = DirectoryDiff::compare(before_snap, after_snap);
     REQUIRE(diff.is_ok());
@@ -637,12 +637,13 @@ TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
     // content change whose last-write time does not change. The native
     // last-write time is captured with last_write_time() and restored
     // verbatim, so no clock quantum is relied on. It is deliberately not
-    // reconstructed from the nanosecond Entry::m_mtime_ns field: the native
-    // file_clock duration is platform-defined (100 ns ticks on MSVC,
-    // nanoseconds on POSIX), so a duration cast there would be wrong. The
-    // positive control (hashed captures of the same tree, same case) proves
-    // the rewrite actually happened and is detected when hashes are present
-    // on both sides, so the negative pin is non-vacuous by construction.
+    // reconstructed from the Entry::m_mtime field: that field records the
+    // snapshot taken earlier, whereas the ground truth for the restore is a
+    // fresh last_write_time() read (native file_clock duration, platform
+    // defined). The positive control (hashed captures of the same tree, same
+    // case) proves the rewrite actually happened and is detected when hashes
+    // are present on both sides, so the negative pin is non-vacuous by
+    // construction.
     auto p = make_test_dir("blindspot");
     auto file = p / "data.txt";
     REQUIRE(pjh::platform::Fs::write_file(file, "aaaa").is_ok());
@@ -651,7 +652,7 @@ TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
     REQUIRE(before.is_ok());
     auto before_snap = before.unwrap();
     REQUIRE(before_snap.get("data.txt").has_value());
-    const auto mtime0 = before_snap.get("data.txt")->m_mtime_ns;
+    const auto mtime0 = before_snap.get("data.txt")->m_mtime;
     auto before_h = DirectorySnapshot::capture(p, nullptr);  // hash all
     REQUIRE(before_h.is_ok());
     REQUIRE(before_h.unwrap().get("data.txt")->m_hash.has_value());
@@ -663,7 +664,7 @@ TEST_CASE("DirectoryDiff misses a same-size in-place rewrite without hashes")
     REQUIRE(after.is_ok());
     auto after_snap = after.unwrap();
     REQUIRE(after_snap.get("data.txt").has_value());
-    CHECK_EQ(after_snap.get("data.txt")->m_mtime_ns, mtime0);
+    CHECK_EQ(after_snap.get("data.txt")->m_mtime, mtime0);
     auto diff = DirectoryDiff::compare(before_snap, after_snap);
     REQUIRE(diff.is_ok());
     CHECK(diff.unwrap().empty());

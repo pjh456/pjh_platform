@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <iterator>
 #include <pjh_platform/directory_snapshot.hpp>
@@ -166,9 +165,7 @@ namespace pjh::platform
             }
             auto mtime = it->last_write_time(sec);
             if (!sec)
-                entry.m_mtime_ns =
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(mtime.time_since_epoch())
-                        .count();
+                entry.m_mtime = mtime;
 
             auto filename = it->path().filename();
             if (!entry.m_is_directory && hasher)

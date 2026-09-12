@@ -12,11 +12,23 @@ namespace pjh::platform
         {
             if (x.m_hash && y.m_hash)
                 return *x.m_hash == *y.m_hash;
-            return x.m_file_size == y.m_file_size && x.m_mtime_ns == y.m_mtime_ns;
+            return x.m_file_size == y.m_file_size && x.m_mtime == y.m_mtime;
         }
 
         // Bucket key for the (file size, mtime) fallback branch of entries_match.
-        using SmKey = std::pair<std::uintmax_t, std::intmax_t>;
+        using SmKey = std::pair<std::uintmax_t, std::filesystem::file_time_type>;
+
+        // Hash projection of a native file time: equal time points always map
+        // to equal keys, so a bucket lookup never misses. The native tick count
+        // is exact for the supported range on every supported stdlib (100 ns
+        // since 1601 on MSVC; nanoseconds since the Unix epoch on
+        // libstdc++/libc++); a narrowing cast can only collide two distinct
+        // times, which merely widens the candidate set because the full
+        // time_point equality in entries_match() resolves the match.
+        auto mtime_hash(const std::filesystem::file_time_type &t) -> std::intmax_t
+        {
+            return static_cast<std::intmax_t>(t.time_since_epoch().count());
+        }
 
         // std::hash provides no pair specialization in libstdc++, so combine
         // the two integral keys manually (quality affects speed, not equality).
@@ -25,7 +37,7 @@ namespace pjh::platform
             auto operator()(const SmKey &key) const noexcept -> std::size_t
             {
                 const auto h1 = std::hash<std::uintmax_t>{}(key.first);
-                const auto h2 = std::hash<std::intmax_t>{}(key.second);
+                const auto h2 = std::hash<std::intmax_t>{}(mtime_hash(key.second));
                 return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
             }
         };
@@ -116,7 +128,7 @@ namespace pjh::platform
             if (it == after_entries.end() || it->second.m_is_directory)
                 continue;
             const auto &entry = it->second;
-            auto sm = SmKey{entry.m_file_size, entry.m_mtime_ns};
+            auto sm = SmKey{entry.m_file_size, entry.m_mtime};
             by_sm_all[sm].push_back(Candidate{i, &entry});
             if (entry.m_hash)
                 by_hash[*entry.m_hash].push_back(Candidate{i, &entry});
@@ -136,7 +148,7 @@ namespace pjh::platform
             // disjoint by construction.
             const std::vector<Candidate> *l1 = nullptr;
             const std::vector<Candidate> *l2 = nullptr;
-            auto sm = SmKey{old_entry->m_file_size, old_entry->m_mtime_ns};
+            auto sm = SmKey{old_entry->m_file_size, old_entry->m_mtime};
             if (old_entry->m_hash)
             {
                 auto h = by_hash.find(*old_entry->m_hash);

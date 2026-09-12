@@ -214,8 +214,10 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     // the same file: the value a filesystem reports can legitimately move by up
     // to one timestamp quantum between the reads (FAT 2 s, exFAT 1 s, NTFS 100 ns)
     // plus Windows lazy mtime update latency. 2 s covers the worst supported
-    // quantum. Size stays exact.
-    constexpr std::intmax_t kMtimeToleranceNs = 2'000'000'000;
+    // quantum. The tolerance is a native file_clock duration, not a nanosecond
+    // count, so it holds whatever period the platform clock uses. Size stays
+    // exact.
+    constexpr auto kMtimeTolerance = std::chrono::seconds(2);
 
     auto p = make_test_dir();
     REQUIRE(pjh::platform::Fs::write_file(p / "data.bin", "0123456789").is_ok());
@@ -223,8 +225,6 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     std::error_code ec;
     auto mtime = std::filesystem::last_write_time(p / "data.bin", ec);
     REQUIRE_FALSE(ec);
-    auto expected_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(mtime.time_since_epoch()).count();
 
     auto r = DirectorySnapshot::capture(p);
     REQUIRE(r.is_ok());
@@ -232,7 +232,7 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     auto entry = snap.get("data.bin");
     REQUIRE(entry.has_value());
     CHECK_EQ(entry->m_file_size, 10u);
-    CHECK(std::abs(entry->m_mtime_ns - expected_ns) <= kMtimeToleranceNs);
+    CHECK(std::chrono::abs(entry->m_mtime - mtime) <= kMtimeTolerance);
 
     // A real write must observably move the mtime: a second, different-size
     // write, a fresh ground-truth read, and a second capture. Guards against
@@ -240,8 +240,6 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     REQUIRE(pjh::platform::Fs::write_file(p / "data.bin", "0123456789AB").is_ok());
     auto mtime2 = std::filesystem::last_write_time(p / "data.bin", ec);
     REQUIRE_FALSE(ec);
-    auto expected_ns2 =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(mtime2.time_since_epoch()).count();
 
     auto r2 = DirectorySnapshot::capture(p);
     REQUIRE(r2.is_ok());
@@ -249,8 +247,41 @@ TEST_CASE("DirectorySnapshot captures last-write times and sizes")
     auto entry2 = snap2.get("data.bin");
     REQUIRE(entry2.has_value());
     CHECK_EQ(entry2->m_file_size, 12u);
-    CHECK(std::abs(entry2->m_mtime_ns - expected_ns2) <= kMtimeToleranceNs);
-    CHECK(entry2->m_mtime_ns >= expected_ns - kMtimeToleranceNs);
+    CHECK(std::chrono::abs(entry2->m_mtime - mtime2) <= kMtimeTolerance);
+    CHECK(entry2->m_mtime >= mtime - kMtimeTolerance);
+}
+
+TEST_CASE("DirectorySnapshot stores last-write times at native file-clock precision")
+{
+    // Task 36.1 regression anchor. The entry must carry the native
+    // filesystem::file_time_type, never a nanosecond count: MSVC's file clock
+    // ticks in 100 ns units since 1601, so a current timestamp converted to
+    // int64 nanoseconds wraps (it exceeds the ~292-year ns range). The ground
+    // truth is read straight from last_write_time() with no duration_cast and
+    // compared bit-exactly; a wrapped-then-reconstructed value cannot match on
+    // Windows. The post-2000 window also rejects a wrapped count reinterpreted
+    // as a time point. The case is representation-agnostic in form and runs on
+    // all four lanes.
+    auto p = make_test_dir();
+    auto file = p / "stamp.bin";
+    REQUIRE(pjh::platform::Fs::write_file(file, "x").is_ok());
+
+    std::error_code ec;
+    const auto pinned = std::filesystem::file_time_type::clock::now();
+    std::filesystem::last_write_time(file, pinned, ec);
+    REQUIRE_FALSE(ec);
+    const auto expected = std::filesystem::last_write_time(file, ec);
+    REQUIRE_FALSE(ec);
+
+    auto r = DirectorySnapshot::capture(p);
+    REQUIRE(r.is_ok());
+    auto snap = std::move(r).unwrap();
+    auto entry = snap.get("stamp.bin");
+    REQUIRE(entry.has_value());
+    CHECK(entry->m_mtime == expected);                          // bit-exact native
+    CHECK(entry->m_mtime >= pinned - std::chrono::seconds(2));  // post-2000
+    CHECK(
+        entry->m_mtime <= std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2));
 }
 
 namespace

@@ -87,8 +87,15 @@ namespace pjh::platform
             /// @brief Size of a regular file in bytes (0 for directories).
             std::uintmax_t m_file_size = 0;
 
-            /// @brief Last write time in nanoseconds since the file-clock epoch.
-            std::intmax_t m_mtime_ns = 0;
+            /// @brief Last write time in the native file-clock representation.
+            ///
+            /// @details The value returned by `std::filesystem::last_write_time`
+            ///          (default-constructed, i.e. the clock epoch, when it
+            ///          could not be read). It is stored natively rather than
+            ///          as a nanosecond count because the MSVC file clock ticks
+            ///          in 100 ns units since 1601 and a current timestamp does
+            ///          not fit in `int64` nanoseconds.
+            std::filesystem::file_time_type m_mtime = {};
 
             /// @brief Content hash when hashing was requested and succeeded;
             ///        `std::nullopt` otherwise.
