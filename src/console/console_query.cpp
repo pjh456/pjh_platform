@@ -21,6 +21,21 @@ namespace pjh::platform
     auto Console::is_tty(int fd) -> bool
     {
 #if PJH_PLATFORM_WINDOWS
+        // Guard before _isatty: the UCRT validates `fh` against the lowio
+        // handle table (`_nhandle`) and, for anything outside it, asserts in
+        // Debug builds and invokes the invalid-parameter handler in Release
+        // (even _get_osfhandle validates the same range), so a bad descriptor
+        // must never reach the call. `_getmaxstdio()` is not a usable bound:
+        // it returns the stdio stream limit (`_nstream`, default 512), which
+        // is independent of the lowio handle table (`_nhandle` starts at 64
+        // and grows in steps of 64), and `_nhandle` has no exported accessor.
+        // The documented domain of this query is the standard descriptors
+        // 0/1/2 (see console.hpp); those are always inside the table after
+        // CRT initialization, so _isatty is still called for every descriptor
+        // the contract admits. Anything else is not a standard-stream
+        // descriptor and returns false without touching the CRT.
+        if (fd < 0 || fd > 2)
+            return false;
         return ::_isatty(fd) != 0;
 #else
         return ::isatty(fd) == 1;
