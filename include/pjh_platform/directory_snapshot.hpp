@@ -105,6 +105,28 @@ namespace pjh::platform
         /// @brief Maps a child filename to its `Entry`.
         using EntryMap = std::map<std::filesystem::path, Entry>;
 
+        /// @brief Default constructor: an empty snapshot.
+        DirectorySnapshot() = default;
+
+        /**
+         * @brief Copy and move operations.
+         *
+         * @details The move operations are explicitly `noexcept` because the
+         *          MSVC standard library does not mark
+         *          `std::filesystem::path`'s move as `noexcept`, which would
+         *          otherwise make
+         *          `std::is_nothrow_move_constructible_v<DirectorySnapshot>`
+         *          false and trip `pjh::result::Result`'s compile-time
+         *          nothrow-move requirement. The move never throws in practice.
+         *          The copy operations are kept so the snapshot stays copyable
+         *          for callers that store it by value.
+         */
+        DirectorySnapshot(const DirectorySnapshot &) = default;
+        DirectorySnapshot(DirectorySnapshot &&) noexcept = default;
+        auto operator=(const DirectorySnapshot &) -> DirectorySnapshot & = default;
+        auto operator=(DirectorySnapshot &&) noexcept -> DirectorySnapshot & = default;
+        ~DirectorySnapshot() = default;
+
         /**
          * @brief Captures @p dir without computing any content hashes.
          *

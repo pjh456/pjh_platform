@@ -3,6 +3,7 @@
 #include <iterator>
 #include <pjh_platform/directory_snapshot.hpp>
 #include <pjh_platform/platform.hpp>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 
@@ -10,6 +11,14 @@
 
 namespace pjh::platform
 {
+
+    // pjh::result::Result requires its success type to be nothrow move
+    // constructible (result.hpp's in-class static_assert); the explicit
+    // noexcept move declaration on DirectorySnapshot keeps this true even
+    // where the standard library's path move is not marked noexcept.
+    static_assert(
+        std::is_nothrow_move_constructible_v<DirectorySnapshot>,
+        "DirectorySnapshot must be nothrow move constructible for pjh::result::Result");
 
     namespace
     {
