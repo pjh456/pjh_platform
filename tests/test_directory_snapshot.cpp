@@ -16,6 +16,10 @@
 #include <utility>
 #include <vector>
 
+#if PJH_PLATFORM_UNIX
+#include <unistd.h>
+#endif
+
 #include "doctest_file_time.hpp"
 
 using pjh::platform::DirectorySnapshot;
@@ -328,6 +332,11 @@ TEST_CASE("DirectorySnapshot reports PermissionDenied for an unreadable director
     REQUIRE(pjh::platform::Fs::write_file(locked / "secret.txt", "top secret").is_ok());
 
 #if PJH_PLATFORM_UNIX
+    // Root bypasses permission bits, so a chmod-restricted directory is still
+    // readable and no PermissionDenied can be produced; skip instead of failing.
+    if (::geteuid() == 0)
+        return;
+
     std::filesystem::permissions(locked, std::filesystem::perms::owner_exec);
     auto r = DirectorySnapshot::capture(locked);
     std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
