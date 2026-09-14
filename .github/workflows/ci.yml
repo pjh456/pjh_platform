@@ -7,6 +7,20 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install clang-format
+        run: pipx install clang-format==22.1.8
+
+      - name: Check formatting
+        run: clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.hpp' '*.h')
+
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
