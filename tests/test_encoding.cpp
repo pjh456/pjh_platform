@@ -127,9 +127,11 @@ TEST_CASE("Encoding::to_wide rejects an overlong NUL embedded mid-string")
     // Input bytes 'A', 0xC0, 0x80, 'B'; the split literal keeps the \x80
     // escape from swallowing the trailing 'B' as a hex digit.
     // Strict contract: invalid input yields empty on every platform.
-    CHECK(enc::to_wide("A\xC0\x80"
-                       "B")
-              .empty());
+    CHECK(
+        enc::to_wide(
+            "A\xC0\x80"
+            "B")
+            .empty());
 }
 
 TEST_CASE("Encoding::to_wide rejects overlong 3/4-byte sequences")
@@ -233,8 +235,9 @@ TEST_CASE("Encoding::display_width counts tab as one column and other controls a
     CHECK_EQ(enc::display_width("\xC2\x80"), 0u);  // U+0080 C1 control
     CHECK_EQ(enc::display_width("\xC2\x9F"), 0u);  // U+009F C1 control
     CHECK_EQ(
-        enc::display_width("a\x01"
-                           "b"),
+        enc::display_width(
+            "a\x01"
+            "b"),
         2u);
 }
 
@@ -260,12 +263,14 @@ TEST_CASE("Encoding::display_width counts malformed bytes as one column each")
 TEST_CASE("Encoding::display_width handles mixed content and long input")
 {
     CHECK_EQ(
-        enc::display_width("a\xE4\xB8\xAD"
-                           "b"),
+        enc::display_width(
+            "a\xE4\xB8\xAD"
+            "b"),
         4u);
     CHECK_EQ(
-        enc::display_width("\xE4\xB8\xAD"
-                           "e\xCC\x81"),
+        enc::display_width(
+            "\xE4\xB8\xAD"
+            "e\xCC\x81"),
         3u);
 
     std::string input;
