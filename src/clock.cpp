@@ -103,3 +103,5 @@ namespace pjh::platform
         return pjh::result::Result<std::string, ErrorCode>::Ok(std::move(out));
     }
 }  // namespace pjh::platform
+
+int     broken   =1;
